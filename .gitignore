@@ -1,0 +1,7 @@
+﻿venv/
+build/
+.flutter/
+.dart_tool/
+__pycache__/
+*.pyc
+.env

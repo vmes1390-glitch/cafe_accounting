@@ -1,6 +1,144 @@
 import flet as ft
+import re
 import sqlite3
 from datetime import datetime, timedelta
+
+# --- سازگارکننده خودکار کدهای فلت 0.24 با فلت نسخه جدید (1.0+) ---
+if not hasattr(ft, "app") and hasattr(ft, "run"):
+    ft.app = lambda target=None, *a, **kw: ft.run(target or a[0])
+
+if not hasattr(ft, "ElevatedButton"):
+    ft.ElevatedButton = getattr(ft, "Button", getattr(ft, "FilledButton", None))
+
+if hasattr(ft, "Icons"):
+    class _CompatIcons:
+        def __getattr__(self, name):
+            if hasattr(ft.Icons, name):
+                return getattr(ft.Icons, name)
+            for fb in (
+                name.replace("_OUTLINE_", "_"),
+                name.replace("_OUTLINED", ""),
+                name.replace("_ROUNDED", ""),
+                "CIRCLE",
+            ):
+                if hasattr(ft.Icons, fb):
+                    return getattr(ft.Icons, fb)
+            return getattr(ft.Icons, "INFO", None)
+    ft.icons = _CompatIcons()
+
+if hasattr(ft, "Colors"):
+    class _CompatColors:
+        def __getattr__(self, name):
+            if hasattr(ft.Colors, name):
+                return getattr(ft.Colors, name)
+            return "#4F46E5"
+        @staticmethod
+        def with_opacity(opacity, color):
+            if hasattr(ft.Colors, "with_opacity"):
+                return ft.Colors.with_opacity(opacity, color)
+            return color
+    ft.colors = _CompatColors()
+
+class _CompatPadding:
+    @staticmethod
+    def symmetric(vertical=0, horizontal=0):
+        if hasattr(ft, "Padding"):
+            if hasattr(ft.Padding, "symmetric"):
+                return ft.Padding.symmetric(vertical=vertical, horizontal=horizontal)
+            return ft.Padding(left=horizontal, top=vertical, right=horizontal, bottom=vertical)
+        return vertical
+
+    @staticmethod
+    def all(value=0):
+        if hasattr(ft, "Padding"):
+            if hasattr(ft.Padding, "all"):
+                return ft.Padding.all(value)
+            return ft.Padding(left=value, top=value, right=value, bottom=value)
+        return value
+
+    @staticmethod
+    def only(left=0, top=0, right=0, bottom=0):
+        if hasattr(ft, "Padding"):
+            return ft.Padding(left=left, top=top, right=right, bottom=bottom)
+        return 0
+
+ft.padding = _CompatPadding()
+
+class _CompatBorder:
+    @staticmethod
+    def all(width=1, color="#000000"):
+        if hasattr(ft, "Border"):
+            if hasattr(ft.Border, "all"):
+                return ft.Border.all(width, color)
+            if hasattr(ft, "BorderSide"):
+                side = ft.BorderSide(width, color)
+                return ft.Border(top=side, bottom=side, left=side, right=side)
+        return None
+
+ft.border = _CompatBorder()
+
+class _CompatAlignment:
+    center = ft.Alignment(0, 0) if hasattr(ft, "Alignment") else None
+    top_left = ft.Alignment(-1, -1) if hasattr(ft, "Alignment") else None
+    top_center = ft.Alignment(0, -1) if hasattr(ft, "Alignment") else None
+    top_right = ft.Alignment(1, -1) if hasattr(ft, "Alignment") else None
+    center_left = ft.Alignment(-1, 0) if hasattr(ft, "Alignment") else None
+    center_right = ft.Alignment(1, 0) if hasattr(ft, "Alignment") else None
+    bottom_left = ft.Alignment(-1, 1) if hasattr(ft, "Alignment") else None
+    bottom_center = ft.Alignment(0, 1) if hasattr(ft, "Alignment") else None
+    bottom_right = ft.Alignment(1, 1) if hasattr(ft, "Alignment") else None
+
+ft.alignment = _CompatAlignment()
+
+if hasattr(ft, "DropdownOption"):
+    if not hasattr(ft, "dropdown"):
+        class _CompatDropdownMod:
+            Option = ft.DropdownOption
+        ft.dropdown = _CompatDropdownMod()
+    elif not hasattr(ft.dropdown, "Option"):
+        ft.dropdown.Option = ft.DropdownOption
+
+for _ctrl_name in (
+    "Button", "ElevatedButton", "FilledButton", "OutlinedButton", "TextButton",
+    "IconButton", "TextField", "Dropdown", "Container",
+    "AlertDialog", "SnackBar", "NavigationBar", "NavigationBarDestination",
+    "ButtonStyle", "TextStyle", "BoxShadow", "Theme",
+):
+    _cls = getattr(ft, _ctrl_name, None)
+    if _cls is not None and not getattr(_cls, "_compat_patched", False):
+        if not hasattr(_cls, "text"):
+            try:
+                _cls.text = property(
+                    lambda self: getattr(self, "content", None),
+                    lambda self, val: setattr(self, "content", val),
+                )
+            except Exception:
+                pass
+        try:
+            _orig_init = _cls.__init__
+            def _make_safe_init(orig):
+                def _safe_init(self, *a, **kw):
+                    while True:
+                        try:
+                            return orig(self, *a, **kw)
+                        except TypeError as ex:
+                            m = re.search(r"unexpected keyword argument '(\w+)'", str(ex))
+                            if m:
+                                bad_key = m.group(1)
+                                if bad_key == "text" and "content" not in kw and not a:
+                                    kw["content"] = kw.pop("text")
+                                elif bad_key in kw:
+                                    kw.pop(bad_key)
+                                else:
+                                    raise
+                            else:
+                                raise
+                return _safe_init
+            _cls.__init__ = _make_safe_init(_orig_init)
+            _cls._compat_patched = True
+        except Exception:
+            pass
+# ------------------------------------------------------------------
 
 DB_NAME = "cafe_accounting.db"
 
@@ -133,7 +271,7 @@ def main(page: ft.Page):
 
     now_dt = datetime.now()
     init_jy, init_jm, init_jd = gregorian_to_jalali(now_dt.year, now_dt.month, now_dt.day)
-    
+
     filter_mode = "day"
     selected_date = datetime(now_dt.year, now_dt.month, now_dt.day)
     selected_j_year = init_jy
@@ -708,7 +846,7 @@ def main(page: ft.Page):
         )
     )
 
-    # 2. مدیریت منو (با فرم جمع‌شونده جدید)
+    # 2. مدیریت منو
     name_input = ft.TextField(
         label="نام محصول",
         height=44,
@@ -780,9 +918,8 @@ def main(page: ft.Page):
 
     menu_products_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
 
-    # کانتینر اصلی فرم که قابلیت مخفی شدن دارد
     add_form_container = ft.Container(
-        visible=False, # به صورت پیش‌فرض مخفی است
+        visible=False,
         bgcolor=ft.colors.WHITE,
         border_radius=14,
         padding=12,
@@ -798,7 +935,6 @@ def main(page: ft.Page):
         )
     )
 
-    # دکمه‌ای که وقتی فرم مخفی است نمایش داده می‌شود
     show_add_form_btn = ft.ElevatedButton(
         "افزودن محصول جدید",
         icon=ft.icons.ADD_ROUNDED,
@@ -829,7 +965,7 @@ def main(page: ft.Page):
         submit_product_btn.text = "ذخیره محصول"
         submit_product_btn.icon = ft.icons.CHECK_CIRCLE_ROUNDED
         submit_product_btn.bgcolor = "#4F46E5"
-        toggle_form(False) # بعد از ریست کردن، فرم را ببند
+        toggle_form(False)
 
     cancel_edit_btn.on_click = lambda e: reset_menu_form()
 
@@ -907,7 +1043,7 @@ def main(page: ft.Page):
                     submit_product_btn.text = "ذخیره تغییرات"
                     submit_product_btn.icon = ft.icons.UPDATE_ROUNDED
                     submit_product_btn.bgcolor = ft.colors.ORANGE_600
-                    toggle_form(True) # موقع ویرایش، فرم رو به طور خودکار باز کن
+                    toggle_form(True)
                     page.update()
 
                 def delete_click(e, prod_id=p_id, prod_name=p_name):

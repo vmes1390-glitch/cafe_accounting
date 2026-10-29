@@ -1523,8 +1523,4 @@ def main(page: ft.Page):
     )
 
 if __name__ == "__main__":
-    if not hasattr(ft, "icons") and hasattr(ft, "Icons"):
-        ft.icons = ft.Icons
-    if not hasattr(ft, "colors") and hasattr(ft, "Colors"):
-        ft.colors = ft.Colors
-    ft.run(main)
+    ft.app(target=main)

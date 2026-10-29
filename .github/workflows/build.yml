@@ -28,6 +28,11 @@ jobs:
           flutter-version: '3.24.3'
           channel: 'stable'
 
+      - name: Accept Android Licenses
+        run: |
+          set +o pipefail
+          yes | flutter doctor --android-licenses
+
       - name: Install Linux dependencies
         run: |
           sudo apt-get update

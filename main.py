@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 # --- سازگارکننده خودکار کدهای فلت 0.24 با فلت نسخه جدید (1.0+) ---
 if not hasattr(ft, "app") and hasattr(ft, "run"):
-    ft.app = lambda target=None, *a, **kw: ft.run(target or a[0])
+    ft.app = lambda target=None, *a, **kw: ft.run(target or a[0], **kw)
 
 if not hasattr(ft, "ElevatedButton"):
     ft.ElevatedButton = getattr(ft, "Button", getattr(ft, "FilledButton", None))
@@ -326,16 +326,69 @@ def perform_db_backup():
         return False, str(e)
 
 
+def force_windows_icon(icon_filename: str, window_title: str):
+    if os.name != "nt":
+        return
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(base_dir, icon_filename)
+    if not os.path.exists(icon_path):
+        return
+
+    import ctypes
+    import threading
+    import time
+
+    def _worker():
+        user32 = ctypes.windll.user32
+        LR_LOADFROMFILE = 0x0010
+        LR_DEFAULTSIZE = 0x0040
+        WM_SETICON = 0x0080
+        GCLP_HICON = -14
+        GCLP_HICONSM = -34
+
+        hicon_big = user32.LoadImageW(0, icon_path, 1, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE)
+        hicon_small = user32.LoadImageW(0, icon_path, 1, 16, 16, LR_LOADFROMFILE)
+        if not hicon_small:
+            hicon_small = hicon_big
+        if not hicon_big:
+            return
+
+        set_class_long = getattr(user32, "SetClassLongPtrW", getattr(user32, "SetClassLongW", None))
+
+        for _ in range(15):
+            hwnd = user32.FindWindowW(None, window_title)
+            if not hwnd:
+                hwnd = user32.FindWindowW("FLUTTER_RUNNER_WIN32_WINDOW", None)
+            if hwnd:
+                user32.SendMessageW(hwnd, WM_SETICON, 1, hicon_big)
+                user32.SendMessageW(hwnd, WM_SETICON, 0, hicon_small)
+                if set_class_long:
+                    try:
+                        set_class_long(hwnd, GCLP_HICON, hicon_big)
+                        set_class_long(hwnd, GCLP_HICONSM, hicon_small)
+                    except Exception:
+                        pass
+            time.sleep(0.3)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def main(page: ft.Page):
     init_db()
 
-    page.title = "حسابداری و صندوق کافه"
+    app_title = "حسابداری و صندوق کافه"
+    page.title = app_title
     page.rtl = True
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = "#F1F5F9"
     page.window.width = 435
     page.window.height = 820
     page.window.resizable = False
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    page.window.icon = os.path.join(base_dir, "icon.ico")
+    force_windows_icon("icon.ico", app_title)
+
     page.padding = 0
 
     page.fonts = {
@@ -503,7 +556,7 @@ def main(page: ft.Page):
                     spacing=8,
                     controls=[
                         ft.Container(
-                            content=ft.Icon(ft.icons.LOCAL_CAFE_ROUNDED, color="#FBBF24", size=22),
+                            content=ft.Icon(ft.icons.COFFEE_ROUNDED, color="#FBBF24", size=22),
                             bgcolor=ft.colors.with_opacity(0.12, ft.colors.WHITE),
                             padding=8,
                             border_radius=12,
@@ -537,7 +590,7 @@ def main(page: ft.Page):
                                         ]
                                     )
                                 ),
-                                backup_btn, # اضافه شدن دکمه بکاپ در کنار تاریخ
+                                backup_btn,
                             ]
                         ),
                         ft.Row(
@@ -1841,7 +1894,6 @@ def main(page: ft.Page):
                                     )
                                 ]
                             ),
-                            # --- نوار پیشرفت (سهم فروش) که درخواست کرده بودید ---
                             ft.Container(
                                 height=5,
                                 bgcolor="#F1F5F9",
@@ -2050,4 +2102,4 @@ def main(page: ft.Page):
     )
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.app(target=main, assets_dir=os.path.dirname(os.path.abspath(__file__)))

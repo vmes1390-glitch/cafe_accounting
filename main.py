@@ -500,20 +500,20 @@ def main(page: ft.Page):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             controls=[
                 ft.Row(
-                    spacing=10,
+                    spacing=8,
                     controls=[
                         ft.Container(
-                            content=ft.Icon(ft.icons.LOCAL_CAFE_ROUNDED, color="#FBBF24", size=24),
+                            content=ft.Icon(ft.icons.LOCAL_CAFE_ROUNDED, color="#FBBF24", size=22),
                             bgcolor=ft.colors.with_opacity(0.12, ft.colors.WHITE),
-                            padding=10,
-                            border_radius=14,
+                            padding=8,
+                            border_radius=12,
                             border=ft.border.all(1, ft.colors.with_opacity(0.2, ft.colors.WHITE)),
                         ),
                         ft.Column(
                             spacing=2,
                             controls=[
-                                ft.Text("ویتا حساب", size=15, font_family="Vazir-Bold", color=ft.colors.WHITE),
-                                ft.Text("صندوق فروش و حسابداری هوشمند", size=10, color="#A5B4FC"),
+                                ft.Text("ویتا حساب", size=14, font_family="Vazir-Bold", color=ft.colors.WHITE),
+                                ft.Text("صندوق فروش و حسابداری هوشمند", size=9, color="#A5B4FC"),
                             ]
                         )
                     ]
@@ -522,17 +522,23 @@ def main(page: ft.Page):
                     horizontal_alignment=ft.CrossAxisAlignment.END,
                     spacing=4,
                     controls=[
-                        ft.Container(
-                            bgcolor=ft.colors.with_opacity(0.15, ft.colors.WHITE),
-                            padding=ft.padding.symmetric(horizontal=10, vertical=5),
-                            border_radius=20,
-                            content=ft.Row(
-                                spacing=5,
-                                controls=[
-                                    ft.Icon(ft.icons.CALENDAR_TODAY_ROUNDED, color=ft.colors.AMBER_300, size=13),
-                                    ft.Text(today_badge_str, size=11, color=ft.colors.WHITE, font_family="Vazir-Bold"),
-                                ]
-                            )
+                        ft.Row(
+                            spacing=6,
+                            controls=[
+                                ft.Container(
+                                    bgcolor=ft.colors.with_opacity(0.15, ft.colors.WHITE),
+                                    padding=ft.padding.symmetric(horizontal=8, vertical=4),
+                                    border_radius=20,
+                                    content=ft.Row(
+                                        spacing=4,
+                                        controls=[
+                                            ft.Icon(ft.icons.CALENDAR_TODAY_ROUNDED, color=ft.colors.AMBER_300, size=12),
+                                            ft.Text(today_badge_str, size=10, color=ft.colors.WHITE, font_family="Vazir-Bold"),
+                                        ]
+                                    )
+                                ),
+                                backup_btn, # اضافه شدن دکمه بکاپ در کنار تاریخ
+                            ]
                         ),
                         ft.Row(
                             spacing=4,
@@ -1104,13 +1110,14 @@ def main(page: ft.Page):
     )
 
     show_add_form_btn = ft.ElevatedButton(
-        "افزودن آیتم جدید",
+        "افزودن آیتم",
         icon=ft.icons.ADD_CIRCLE_OUTLINE_ROUNDED,
         bgcolor="#4F46E5",
         color=ft.colors.WHITE,
         elevation=2,
-        height=38,
+        height=36,
         style=ft.ButtonStyle(
+            padding=ft.padding.symmetric(horizontal=10, vertical=0),
             shape=ft.RoundedRectangleBorder(radius=10),
             text_style=ft.TextStyle(size=11, font_family="Vazir-Bold")
         )
@@ -1209,7 +1216,7 @@ def main(page: ft.Page):
         rows = cursor.fetchall()
         conn.close()
 
-        menu_count_badge.value = f"{len(rows)} محصول ثبت‌شده"
+        menu_count_badge.value = f"{len(rows)} محصول"
 
         if not rows:
             menu_products_col.controls.append(
@@ -1369,26 +1376,26 @@ def main(page: ft.Page):
             expand=True,
             controls=[
                 ft.Row(
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
                         ft.Row(
-                            spacing=8,
+                            spacing=6,
                             controls=[
                                 ft.Container(
-                                    content=ft.Icon(ft.icons.MENU_BOOK_ROUNDED, color="#4338CA", size=20),
+                                    content=ft.Icon(ft.icons.MENU_BOOK_ROUNDED, color="#4338CA", size=18),
                                     bgcolor="#EEF2FF",
-                                    padding=8,
+                                    padding=7,
                                     border_radius=10,
                                 ),
-                                ft.Text("مدیریت منو", size=15, font_family="Vazir-Bold", color="#0F172A"),
+                                ft.Text("مدیریت منو", size=14, font_family="Vazir-Bold", color="#0F172A"),
                                 ft.Container(
                                     bgcolor="#EEF2FF",
-                                    padding=ft.padding.symmetric(horizontal=8, vertical=3),
+                                    padding=ft.padding.symmetric(horizontal=7, vertical=3),
                                     border_radius=8,
                                     content=menu_count_badge
                                 )
                             ]
                         ),
-                        ft.Container(expand=True),
                         show_add_form_btn
                     ]
                 ),

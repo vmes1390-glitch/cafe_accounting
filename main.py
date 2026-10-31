@@ -1833,6 +1833,19 @@ def main(page: ft.Page):
                                         )
                                     )
                                 ]
+                            ),
+                            # --- نوار پیشرفت (سهم فروش) که درخواست کرده بودید ---
+                            ft.Container(
+                                height=5,
+                                bgcolor="#F1F5F9",
+                                border_radius=5,
+                                content=ft.Row(
+                                    spacing=0,
+                                    controls=[
+                                        ft.Container(expand=max(1, share_pct), bgcolor="#4F46E5", border_radius=5),
+                                        ft.Container(expand=max(0, 100 - share_pct)),
+                                    ]
+                                )
                             )
                         ]
                     )

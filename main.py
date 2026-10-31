@@ -145,13 +145,13 @@ for _ctrl_name in (
 DB_NAME = "cafe_accounting.db"
 
 CATEGORIES_LIST = [
-    "قهوه",
-    "نوشیدنی گرم بر پایۀ قهوه",
-    "نوشیدنی سرد بر پایۀ قهوه",
-    "شیک",
+    "قهوه‌ها",
+    "نوشیدنی‌های گرم بر پایۀ قهوه",
+    "نوشیدنی‌های سرد بر پایۀ قهوه",
+    "شیک‌ها",
     "بستنی بار",
-    "نوشیدنی گرم",
-    "چای",
+    "نوشیدنی‌های گرم",
+    "چای‌ها",
 ]
 
 JALALI_MONTHS = [
@@ -275,9 +275,16 @@ def init_db():
             name TEXT NOT NULL,
             category TEXT NOT NULL,
             cost_price REAL NOT NULL,
-            sell_price REAL NOT NULL
+            sell_price REAL NOT NULL,
+            sort_index INTEGER DEFAULT 0
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE products ADD COLUMN sort_index INTEGER DEFAULT 0")
+        cursor.execute("UPDATE products SET sort_index = id") 
+    except Exception:
+        pass
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -367,7 +374,7 @@ def main(page: ft.Page):
             behavior=ft.SnackBarBehavior.FLOATING,
             shape=ft.RoundedRectangleBorder(radius=14),
             margin=14,
-            duration=2000,
+            duration=1000,
         )
         page.overlay.append(snack)
         snack.open = True
@@ -482,7 +489,7 @@ def main(page: ft.Page):
     )
 
     top_app_header = ft.Container(
-        padding=ft.padding.only(top=44, bottom=14, left=16, right=16),
+        padding=ft.padding.only(top=44, bottom=14, left=12, right=12),
         gradient=ft.LinearGradient(
             begin=ft.alignment.top_right,
             end=ft.alignment.bottom_left,
@@ -505,7 +512,7 @@ def main(page: ft.Page):
                         ft.Column(
                             spacing=2,
                             controls=[
-                                ft.Text("کافه حساب", size=15, font_family="Vazir-Bold", color=ft.colors.WHITE),
+                                ft.Text("ویتا حساب", size=15, font_family="Vazir-Bold", color=ft.colors.WHITE),
                                 ft.Text("صندوق فروش و حسابداری هوشمند", size=10, color="#A5B4FC"),
                             ]
                         )
@@ -584,7 +591,7 @@ def main(page: ft.Page):
         hint_text="جستجوی سریع نام محصول...",
         prefix_icon=ft.icons.SEARCH_ROUNDED,
         height=38,
-        expand=True, # با این دستور، سرچ‌باکس تمام فضای خالی را به زیبایی پر می‌کند
+        expand=True,
         text_size=11,
         content_padding=ft.padding.symmetric(horizontal=10, vertical=0),
         border_radius=12,
@@ -595,13 +602,14 @@ def main(page: ft.Page):
 
     def get_category_style(cat: str):
         styles = {
-            "قهوه": (ft.icons.COFFEE_ROUNDED, "#78350F", "#FEF3C7", "#FDE68A"),
-            "نوشیدنی گرم بر پایۀ قهوه": (ft.icons.LOCAL_CAFE_ROUNDED, "#9A3412", "#FFEDD5", "#FED7AA"),
-            "نوشیدنی سرد بر پایۀ قهوه": (ft.icons.AC_UNIT_ROUNDED, "#0369A1", "#E0F2FE", "#BAE6FD"),
-            "شیک": (ft.icons.BLENDER_ROUNDED, "#6D28D9", "#EDE9FE", "#DDD6FE"),
+            "قهوه‌ها": (ft.icons.COFFEE_ROUNDED, "#78350F", "#FEF3C7", "#FDE68A"),
+            "نوشیدنی‌های گرم بر پایۀ قهوه": (ft.icons.LOCAL_CAFE_ROUNDED, "#9A3412", "#FFEDD5", "#FED7AA"),
+            "نوشیدنی‌های سرد بر پایۀ قهوه": (ft.icons.AC_UNIT_ROUNDED, "#0369A1", "#E0F2FE", "#BAE6FD"),
+            "شیک‌ها": (ft.icons.BLENDER_ROUNDED, "#6D28D9", "#EDE9FE", "#DDD6FE"),
             "بستنی بار": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
-            "نوشیدنی گرم": (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#B91C1C", "#FEE2E2", "#FECACA"),
-            "چای": (ft.icons.LOCAL_DRINK_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0"),
+            "بستنی بارها": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
+            "نوشیدنی‌های گرم": (ft.icons.LOCAL_DRINK_ROUNDED, "#B91C1C", "#FEE2E2", "#FECACA"),
+            "چای‌ها": (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0"),
         }
         return styles.get(cat, (ft.icons.LOCAL_CAFE_ROUNDED, "#4338CA", "#EEF2FF", "#C7D2FE"))
 
@@ -609,7 +617,7 @@ def main(page: ft.Page):
         cashier_products_col.controls.clear()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, category, cost_price, sell_price FROM products ORDER BY id DESC")
+        cursor.execute("SELECT id, name, category, cost_price, sell_price FROM products ORDER BY sort_index ASC")
         rows = cursor.fetchall()
         conn.close()
 
@@ -656,46 +664,23 @@ def main(page: ft.Page):
                 p_id, p_name, p_cat, p_cost, p_sell = row
                 cat_icon, cat_color, cat_bg, cat_border = get_category_style(p_cat)
 
-                qty_state = {"val": 1}
-                qty_label = ft.Text("1", size=12, font_family="Vazir-Bold", color="#1E293B", text_align=ft.TextAlign.CENTER, width=22)
-
-                def make_step_handlers(state_dict, lbl_ctrl):
-                    def dec_click(e):
-                        if state_dict["val"] > 1:
-                            state_dict["val"] -= 1
-                            lbl_ctrl.value = str(state_dict["val"])
-                            page.update()
-
-                    def inc_click(e):
-                        state_dict["val"] += 1
-                        lbl_ctrl.value = str(state_dict["val"])
-                        page.update()
-
-                    return dec_click, inc_click
-
-                dec_fn, inc_fn = make_step_handlers(qty_state, qty_label)
-
-                def direct_checkout_click(e, prod=(p_id, p_name, p_cost, p_sell), st=qty_state, lbl=qty_label):
-                    qty = st["val"]
+                def direct_checkout_click(e, prod=(p_id, p_name, p_cost, p_sell)):
                     conn = sqlite3.connect(DB_NAME)
                     cursor = conn.cursor()
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                     unit_profit = prod[3] - prod[2]
 
-                    for _ in range(qty):
-                        cursor.execute("""
-                            INSERT INTO orders (product_name, sell_price, profit, order_date)
-                            VALUES (?, ?, ?, ?)
-                        """, (prod[1], prod[3], unit_profit, now_str))
+                    cursor.execute("""
+                        INSERT INTO orders (product_name, sell_price, profit, order_date)
+                        VALUES (?, ?, ?, ?)
+                    """, (prod[1], prod[3], unit_profit, now_str))
 
                     conn.commit()
                     conn.close()
 
-                    st["val"] = 1
-                    lbl.value = "1"
                     refresh_header_today_sales()
                     load_cashier_products()
-                    show_snackbar(f"{qty} عدد «{prod[1]}» با موفقیت در فاکتور ثبت شد.", "#059669")
+                    show_snackbar(f"یک عدد «{prod[1]}» در فاکتور ثبت شد.", "#059669")
 
                 card = ft.Container(
                     bgcolor=ft.colors.WHITE,
@@ -724,6 +709,7 @@ def main(page: ft.Page):
                                             ft.Text(p_name, font_family="Vazir-Bold", size=13, color="#0F172A"),
                                             ft.Row(
                                                 spacing=6,
+                                                wrap=True, 
                                                 controls=[
                                                     ft.Container(
                                                         content=ft.Text(p_cat, size=9, color=cat_color, font_family="Vazir-Bold"),
@@ -738,39 +724,12 @@ def main(page: ft.Page):
                                     ),
                                 ]
                             ),
-                            ft.Row(
-                                spacing=6,
-                                controls=[
-                                    ft.Container(
-                                        bgcolor="#F8FAFC",
-                                        border=ft.border.all(1, "#E2E8F0"),
-                                        border_radius=10,
-                                        padding=ft.padding.symmetric(horizontal=4, vertical=2),
-                                        content=ft.Row(
-                                            spacing=2,
-                                            controls=[
-                                                ft.Container(
-                                                    content=ft.Icon(ft.icons.ADD_ROUNDED, size=15, color="#4F46E5"),
-                                                    width=26, height=26, bgcolor="#EEF2FF", border_radius=7, alignment=ft.alignment.center,
-                                                    on_click=inc_fn,
-                                                ),
-                                                qty_label,
-                                                ft.Container(
-                                                    content=ft.Icon(ft.icons.REMOVE_ROUNDED, size=15, color="#64748B"),
-                                                    width=26, height=26, bgcolor="#F1F5F9", border_radius=7, alignment=ft.alignment.center,
-                                                    on_click=dec_fn,
-                                                ),
-                                            ]
-                                        )
-                                    ),
-                                    ft.Container(
-                                        gradient=ft.LinearGradient(colors=["#4F46E5", "#6366F1"]),
-                                        width=38, height=36, border_radius=10, alignment=ft.alignment.center,
-                                        on_click=direct_checkout_click,
-                                        shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.25, "#4F46E5"), offset=ft.Offset(0, 2)),
-                                        content=ft.Icon(ft.icons.POINT_OF_SALE_ROUNDED, color=ft.colors.WHITE, size=18),
-                                    )
-                                ]
+                            ft.Container(
+                                gradient=ft.LinearGradient(colors=["#4F46E5", "#6366F1"]),
+                                width=60, height=44, border_radius=12, alignment=ft.alignment.center,
+                                on_click=direct_checkout_click,
+                                shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.25, "#4F46E5"), offset=ft.Offset(0, 2)),
+                                content=ft.Icon(ft.icons.POINT_OF_SALE_ROUNDED, color=ft.colors.WHITE, size=24),
                             )
                         ]
                     )
@@ -842,26 +801,34 @@ def main(page: ft.Page):
                                         spacing=8,
                                         controls=[
                                             ft.Container(
-                                                content=ft.Text(f"#{display_num}", size=11, font_family="Vazir-Bold", color="#4F46E5"),
-                                                bgcolor="#EEF2FF",
-                                                padding=ft.padding.symmetric(horizontal=8, vertical=5),
-                                                border_radius=8,
+                                                content=ft.Icon(ft.icons.DELETE_FOREVER_ROUNDED, color=ft.colors.RED_600, size=18),
+                                                bgcolor=ft.colors.RED_50,
+                                                width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                                                on_click=ask_delete_order,
+                                                tooltip="لغو این سفارش"
                                             ),
                                             ft.Column(
                                                 spacing=2,
                                                 controls=[
-                                                    ft.Text(f"سفارش {display_num} - {o_name}", size=12, font_family="Vazir-Bold", color="#0F172A"),
-                                                    ft.Text(f"{format_price(o_price)} تومان  |  {jalali_dt}", size=10, color="#64748B")
+                                                    ft.Text(o_name, size=12, font_family="Vazir-Bold", color="#0F172A"),
+                                                    ft.Row(
+                                                        spacing=4,
+                                                        controls=[
+                                                            ft.Text("تومان", size=10, color="#64748B"),
+                                                            ft.Text(f"{format_price(o_price)}", size=10, font_family="Vazir-Bold", color="#64748B"),
+                                                            ft.Text("|", size=9, color="#CBD5E1"),
+                                                            ft.Text(jalali_dt, size=10, color="#64748B")
+                                                        ]
+                                                    )
                                                 ]
                                             ),
                                         ]
                                     ),
                                     ft.Container(
-                                        content=ft.Icon(ft.icons.DELETE_FOREVER_ROUNDED, color=ft.colors.RED_600, size=18),
-                                        bgcolor=ft.colors.RED_50,
-                                        width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                                        on_click=ask_delete_order,
-                                        tooltip="لغو این سفارش"
+                                        content=ft.Text(f"{display_num}", size=11, font_family="Vazir-Bold", color="#4F46E5"),
+                                        bgcolor="#EEF2FF",
+                                        padding=ft.padding.symmetric(horizontal=8, vertical=5),
+                                        border_radius=8,
                                     )
                                 ]
                             )
@@ -898,7 +865,7 @@ def main(page: ft.Page):
         page.update()
 
     cashier_view = ft.Container(
-        padding=16, # افزایش فضای تنفس برای ظاهر مدرن‌تر
+        padding=16,
         expand=True,
         content=ft.Column(
             spacing=12,
@@ -935,8 +902,28 @@ def main(page: ft.Page):
     # =========================================================================
     # 2. تب مدیریت منو (با نمایش زنده حروف فارسی و سود خالص)
     # =========================================================================
+    def move_product(prod_id, current_sort, direction):
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        if direction == "up":
+            cursor.execute("SELECT id, sort_index FROM products WHERE sort_index < ? ORDER BY sort_index DESC LIMIT 1", (current_sort,))
+        else:
+            cursor.execute("SELECT id, sort_index FROM products WHERE sort_index > ? ORDER BY sort_index ASC LIMIT 1", (current_sort,))
+            
+        adjacent = cursor.fetchone()
+        if adjacent:
+            adj_id, adj_sort = adjacent
+            cursor.execute("UPDATE products SET sort_index = ? WHERE id = ?", (adj_sort, prod_id))
+            cursor.execute("UPDATE products SET sort_index = ? WHERE id = ?", (current_sort, adj_id))
+            conn.commit()
+        
+        conn.close()
+        load_menu_products()
+        load_cashier_products()
+
     name_input = ft.TextField(
-        label="نام محصول (مثلاً اسپرسو دبل)",
+        label="نام محصول",
         height=44,
         text_size=12,
         content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
@@ -946,7 +933,7 @@ def main(page: ft.Page):
         expand=1
     )
     category_dropdown = ft.Dropdown(
-        label="دسته‌بندی منو",
+        label="دسته‌بندی",
         height=44,
         text_size=12,
         content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
@@ -954,7 +941,7 @@ def main(page: ft.Page):
         border_color="#CBD5E1",
         bgcolor="#F8FAFC",
         expand=1,
-        value="قهوه",
+        value="قهوه‌ها",
         options=[ft.dropdown.Option(c) for c in CATEGORIES_LIST]
     )
 
@@ -1001,7 +988,7 @@ def main(page: ft.Page):
         page.update()
 
     cost_input = ft.TextField(
-        label="قیمت خرید / مایه (تومان)",
+        label="قیمت پایه",
         height=44,
         text_size=12,
         keyboard_type=ft.KeyboardType.NUMBER,
@@ -1012,7 +999,7 @@ def main(page: ft.Page):
         on_change=on_cost_price_change
     )
     sell_input = ft.TextField(
-        label="قیمت فروش به مشتری (تومان)",
+        label="قیمت فروش",
         height=44,
         text_size=12,
         keyboard_type=ft.KeyboardType.NUMBER,
@@ -1140,7 +1127,7 @@ def main(page: ft.Page):
         nonlocal editing_product_id
         editing_product_id = None
         name_input.value = ""
-        category_dropdown.value = "قهوه"
+        category_dropdown.value = "قهوه‌ها"
         cost_input.value = ""
         sell_input.value = ""
         cost_words_text.value = "صفر تومان"
@@ -1176,10 +1163,14 @@ def main(page: ft.Page):
         cursor = conn.cursor()
 
         if editing_product_id is None:
+            cursor.execute("SELECT MAX(sort_index) FROM products")
+            max_sort = cursor.fetchone()[0]
+            new_sort = (max_sort or 0) + 1
+            
             cursor.execute("""
-                INSERT INTO products (name, category, cost_price, sell_price)
-                VALUES (?, ?, ?, ?)
-            """, (name, cat, cost_val, sell_val))
+                INSERT INTO products (name, category, cost_price, sell_price, sort_index)
+                VALUES (?, ?, ?, ?, ?)
+            """, (name, cat, cost_val, sell_val, new_sort))
             show_snackbar(f"محصول «{name}» با موفقیت به منو اضافه شد.", "#059669")
         else:
             cursor.execute("SELECT name FROM products WHERE id = ?", (editing_product_id,))
@@ -1214,7 +1205,7 @@ def main(page: ft.Page):
         menu_products_col.controls.clear()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, category, cost_price, sell_price FROM products ORDER BY id DESC")
+        cursor.execute("SELECT id, name, category, cost_price, sell_price, sort_index FROM products ORDER BY sort_index ASC")
         rows = cursor.fetchall()
         conn.close()
 
@@ -1233,18 +1224,8 @@ def main(page: ft.Page):
             )
         else:
             for r in rows:
-                p_id, p_name, p_cat, p_cost, p_sell = r
-                
-                styles = {
-                    "قهوه": (ft.icons.COFFEE_ROUNDED, "#78350F", "#FEF3C7", "#FDE68A"),
-                    "نوشیدنی گرم بر پایۀ قهوه": (ft.icons.LOCAL_CAFE_ROUNDED, "#9A3412", "#FFEDD5", "#FED7AA"),
-                    "نوشیدنی سرد بر پایۀ قهوه": (ft.icons.AC_UNIT_ROUNDED, "#0369A1", "#E0F2FE", "#BAE6FD"),
-                    "شیک": (ft.icons.BLENDER_ROUNDED, "#6D28D9", "#EDE9FE", "#DDD6FE"),
-                    "بستنی بار": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
-                    "نوشیدنی گرم": (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#B91C1C", "#FEE2E2", "#FECACA"),
-                    "چای": (ft.icons.LOCAL_DRINK_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0"),
-                }
-                cat_icon, cat_color, cat_bg, cat_border = styles.get(p_cat, (ft.icons.LOCAL_CAFE_ROUNDED, "#4338CA", "#EEF2FF", "#C7D2FE"))
+                p_id, p_name, p_cat, p_cost, p_sell, p_sort = r
+                cat_icon, cat_color, cat_bg, cat_border = get_category_style(p_cat)
                 unit_prof = p_sell - p_cost
                 margin_pct = int((unit_prof / p_sell) * 100) if p_sell > 0 else 0
 
@@ -1327,6 +1308,18 @@ def main(page: ft.Page):
                                         spacing=4,
                                         controls=[
                                             ft.Container(
+                                                content=ft.Icon(ft.icons.KEYBOARD_ARROW_UP_ROUNDED, color="#059669", size=18),
+                                                bgcolor="#D1FAE5", width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                                                on_click=lambda e, pid=p_id, s=p_sort: move_product(pid, s, "up"),
+                                                tooltip="یک پله به بالا"
+                                            ),
+                                            ft.Container(
+                                                content=ft.Icon(ft.icons.KEYBOARD_ARROW_DOWN_ROUNDED, color="#059669", size=18),
+                                                bgcolor="#D1FAE5", width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                                                on_click=lambda e, pid=p_id, s=p_sort: move_product(pid, s, "down"),
+                                                tooltip="یک پله به پایین"
+                                            ),
+                                            ft.Container(
                                                 content=ft.Icon(ft.icons.EDIT_NOTE_ROUNDED, color=ft.colors.BLUE_700, size=18),
                                                 bgcolor=ft.colors.BLUE_50,
                                                 width=34, height=34, border_radius=8, alignment=ft.alignment.center,
@@ -1351,7 +1344,7 @@ def main(page: ft.Page):
                                 content=ft.Row(
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     controls=[
-                                        ft.Text(f"مایه: {format_price(p_cost)} ت", size=10, color="#64748B"),
+                                        ft.Text(f"پایه: {format_price(p_cost)} ت", size=10, color="#64748B"),
                                         ft.Text(f"فروش: {format_price(p_sell)} ت", size=10, color="#0F172A", font_family="Vazir-Bold"),
                                         ft.Container(
                                             bgcolor="#DCFCE7",
@@ -1376,7 +1369,6 @@ def main(page: ft.Page):
             expand=True,
             controls=[
                 ft.Row(
-                    # دستور alignment حذف شد تا باگ راست‌چین برطرف شود
                     controls=[
                         ft.Row(
                             spacing=8,
@@ -1396,7 +1388,7 @@ def main(page: ft.Page):
                                 )
                             ]
                         ),
-                        ft.Container(expand=True), # این باکس نامرئی و کشسان، نقش هل‌دهنده را بازی می‌کند
+                        ft.Container(expand=True),
                         show_add_form_btn
                     ]
                 ),
@@ -1426,48 +1418,97 @@ def main(page: ft.Page):
         cur_jy, cur_jm, cur_jd = gregorian_to_jalali(selected_date.year, selected_date.month, selected_date.day)
         cal_state = {"jy": cur_jy, "jm": cur_jm, "jd": cur_jd}
 
-        cal_header_text = ft.Text("", size=14, font_family="Vazir-Bold", color="#1E1B4B")
-        days_grid_col = ft.Column(spacing=6, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        cal_header_text = ft.Text("", size=13, font_family="Vazir-Bold", color="#1E1B4B")
+        days_grid_col = ft.Column(spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+
+        CELL_W = 34
+        CELL_H = 34
+        ROW_SPACING = 5
 
         def render_calendar_grid():
             jy, jm = cal_state["jy"], cal_state["jm"]
-            cal_header_text.value = f"{JALALI_MONTHS[jm - 1]} {jy}"
+            
+            max_days = get_jalali_month_days(jy, jm)
+            if cal_state["jd"] > max_days:
+                cal_state["jd"] = max_days
+            jd = cal_state["jd"]
+            
+            gy, gm, gd = jalali_to_gregorian(jy, jm, jd)
+            target_date = datetime(gy, gm, gd)
+            weekday_idx = (target_date.weekday() + 2) % 7
+            weekdays_names = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه"]
+            day_name = weekdays_names[weekday_idx]
+            
+            cal_header_text.value = f"{day_name}، {jd} {JALALI_MONTHS[jm - 1]} {jy}"
             days_grid_col.controls.clear()
 
-            max_days = get_jalali_month_days(jy, jm)
+            weekdays_chars = ["ش", "ی", "د", "س", "چ", "پ", "ج"]
+            header_buttons = []
+            for w in weekdays_chars:
+                header_buttons.append(
+                    ft.Container(
+                        width=CELL_W, height=28, bgcolor="#EEF2FF", border_radius=8,
+                        alignment=ft.alignment.center,
+                        content=ft.Text(w, size=11, color="#4F46E5", font_family="Vazir-Bold")
+                    )
+                )
+            
+            days_grid_col.controls.append(
+                ft.Container(
+                    margin=ft.padding.only(bottom=6),
+                    content=ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=header_buttons[::-1])
+                )
+            )
+
+            gy_first, gm_first, gd_first = jalali_to_gregorian(jy, jm, 1)
+            first_day_date = datetime(gy_first, gm_first, gd_first)
+            offset = (first_day_date.weekday() + 2) % 7
+
             row_buttons = []
+            for _ in range(offset):
+                row_buttons.append(ft.Container(width=CELL_W, height=CELL_H))
 
             for d in range(1, max_days + 1):
                 is_selected = (jy == cur_jy and jm == cur_jm and d == cur_jd)
                 is_today = (jy == today_jy and jm == today_jm and d == today_jd)
+                is_future = (jy, jm, d) > (today_jy, today_jm, today_jd)
 
                 def pick_day(e, day_num=d):
                     nonlocal selected_date
-                    gy, gm, gd = jalali_to_gregorian(cal_state["jy"], cal_state["jm"], day_num)
-                    selected_date = datetime(gy, gm, gd)
+                    gy_pick, gm_pick, gd_pick = jalali_to_gregorian(cal_state["jy"], cal_state["jm"], day_num)
+                    selected_date = datetime(gy_pick, gm_pick, gd_pick)
                     cal_dlg.open = False
                     update_dashboard_controls()
                     load_dashboard_data()
 
-                btn_bg = "#4F46E5" if is_selected else ("#FEF3C7" if is_today else "#F1F5F9")
-                btn_col = ft.colors.WHITE if is_selected else ("#92400E" if is_today else "#334155")
+                if is_future:
+                    btn_bg, btn_col, click_action = "#F8FAFC", "#CBD5E1", None
+                else:
+                    btn_bg = "#4F46E5" if is_selected else ("#FEF3C7" if is_today else "#F1F5F9")
+                    btn_col = ft.colors.WHITE if is_selected else ("#92400E" if is_today else "#334155")
+                    click_action = pick_day
 
                 row_buttons.append(
                     ft.Container(
-                        width=40,
-                        height=36,
-                        bgcolor=btn_bg,
-                        border_radius=10,
-                        alignment=ft.alignment.center,
-                        on_click=pick_day,
-                        content=ft.Text(str(d), size=12, font_family="Vazir-Bold", color=btn_col)
+                        width=CELL_W, height=CELL_H, bgcolor=btn_bg, border_radius=9,
+                        alignment=ft.alignment.center, on_click=click_action,
+                        content=ft.Text(str(d), size=11, font_family="Vazir-Bold", color=btn_col)
                     )
                 )
-                if len(row_buttons) == 6 or d == max_days:
+
+                if len(row_buttons) == 7:
                     days_grid_col.controls.append(
-                        ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=6, controls=row_buttons)
+                        ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=row_buttons[::-1])
                     )
                     row_buttons = []
+
+            if row_buttons:
+                while len(row_buttons) < 7:
+                    row_buttons.append(ft.Container(width=CELL_W, height=CELL_H))
+                days_grid_col.controls.append(
+                    ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=row_buttons[::-1])
+                )
+            
             page.update()
 
         def change_cal_month(delta: int):
@@ -1496,25 +1537,29 @@ def main(page: ft.Page):
             shape=ft.RoundedRectangleBorder(radius=20),
             bgcolor=ft.colors.WHITE,
             surface_tint_color=ft.colors.WHITE,
+            title_padding=ft.padding.only(top=18, left=18, right=18, bottom=6),
+            content_padding=ft.padding.symmetric(horizontal=18, vertical=10),
+            actions_padding=ft.padding.only(left=18, right=18, bottom=14, top=4),
             title=ft.Row(
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[
                     ft.Container(
                         content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color="#4F46E5", size=20),
                         bgcolor="#EEF2FF", width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                        on_click=lambda e: change_cal_month(1)
+                        on_click=lambda e: change_cal_month(-1)
                     ),
                     cal_header_text,
                     ft.Container(
                         content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color="#4F46E5", size=20),
                         bgcolor="#EEF2FF", width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                        on_click=lambda e: change_cal_month(-1)
+                        on_click=lambda e: change_cal_month(1)
                     ),
                 ]
             ),
             content=ft.Container(
-                width=300,
-                height=260,
+                width=276,
+                height=295,
+                alignment=ft.alignment.center,
                 content=days_grid_col
             ),
             actions=[
@@ -1522,12 +1567,8 @@ def main(page: ft.Page):
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
                         ft.ElevatedButton(
-                            "برو به امروز",
-                            icon=ft.icons.TODAY_ROUNDED,
-                            bgcolor="#EEF2FF",
-                            color="#4F46E5",
-                            elevation=0,
-                            on_click=go_to_today
+                            "برو به امروز", icon=ft.icons.TODAY_ROUNDED,
+                            bgcolor="#EEF2FF", color="#4F46E5", elevation=0, on_click=go_to_today
                         ),
                         ft.TextButton("بستن", on_click=lambda e: close_dialog(cal_dlg))
                     ]
@@ -1792,19 +1833,6 @@ def main(page: ft.Page):
                                         )
                                     )
                                 ]
-                            ),
-                            # نوار پیشرفت سهم فروش محصول
-                            ft.Container(
-                                height=5,
-                                bgcolor="#F1F5F9",
-                                border_radius=5,
-                                content=ft.Row(
-                                    spacing=0,
-                                    controls=[
-                                        ft.Container(expand=max(1, share_pct), bgcolor="#4F46E5", border_radius=5),
-                                        ft.Container(expand=max(0, 100 - share_pct)),
-                                    ]
-                                )
                             )
                         ]
                     )
@@ -1812,7 +1840,6 @@ def main(page: ft.Page):
                 report_items_col.controls.append(card)
         page.update()
 
-    # کارت هیرو سود خالص در داشبورد
     hero_profit_card = ft.Container(
         border_radius=18,
         padding=14,
@@ -1902,7 +1929,7 @@ def main(page: ft.Page):
                                     ft.Column(
                                         spacing=1,
                                         controls=[
-                                            ft.Text("درآمد کل (فروش)", size=10, color="#64748B", font_family="Vazir-Bold"),
+                                            ft.Text("درآمد کل", size=10, color="#64748B", font_family="Vazir-Bold"),
                                             total_revenue_text,
                                         ]
                                     )
@@ -1927,7 +1954,7 @@ def main(page: ft.Page):
                                     ft.Column(
                                         spacing=1,
                                         controls=[
-                                            ft.Text("هزینه مایه (خرید)", size=10, color="#64748B", font_family="Vazir-Bold"),
+                                            ft.Text("هزینه پایه", size=10, color="#64748B", font_family="Vazir-Bold"),
                                             total_cost_text,
                                         ]
                                     )

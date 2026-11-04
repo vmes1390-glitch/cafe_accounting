@@ -3,6 +3,10 @@ import re
 import sqlite3
 import os
 import shutil
+import zlib
+import base64
+import threading
+import time
 from datetime import datetime, timedelta
 
 # --- سازگارکننده خودکار کدهای فلت 0.24 با فلت نسخه جدید (1.0+) ---
@@ -102,7 +106,7 @@ if hasattr(ft, "DropdownOption"):
 
 for _ctrl_name in (
     "Button", "ElevatedButton", "FilledButton", "OutlinedButton", "TextButton",
-    "IconButton", "TextField", "Dropdown", "Container",
+    "IconButton", "TextField", "Dropdown", "Container", "GestureDetector",
     "AlertDialog", "SnackBar", "NavigationBar", "NavigationBarDestination",
     "ButtonStyle", "TextStyle", "BoxShadow", "Theme",
 ):
@@ -142,9 +146,26 @@ for _ctrl_name in (
             pass
 # ------------------------------------------------------------------
 
-DB_NAME = "cafe_accounting.db"
+def _resolve_storage_dir():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    test_db = os.path.join(base_dir, "cafe_accounting.db")
+    if os.path.exists(test_db):
+        return base_dir
+    try:
+        test_file = os.path.join(base_dir, ".write_test")
+        with open(test_file, "w") as f:
+            f.write("1")
+        os.remove(test_file)
+        return base_dir
+    except Exception:
+        return os.environ.get("FLET_APP_STORAGE_DATA", os.path.expanduser("~"))
 
-CATEGORIES_LIST = [
+APP_STORAGE_DIR = _resolve_storage_dir()
+DB_NAME = os.path.join(APP_STORAGE_DIR, "cafe_accounting.db")
+INTERNAL_BACKUP_DIR = os.path.join(APP_STORAGE_DIR, "backups")
+BACKUP_CODE_PREFIX = "VITA_BKP_V1:"
+
+DEFAULT_CATEGORIES = [
     "قهوه‌ها",
     "نوشیدنی‌های گرم بر پایۀ قهوه",
     "نوشیدنی‌های سرد بر پایۀ قهوه",
@@ -152,7 +173,21 @@ CATEGORIES_LIST = [
     "بستنی بار",
     "نوشیدنی‌های گرم",
     "چای‌ها",
+    "کیک و دسر",
 ]
+
+ADD_CAT_OPTION = "+ افزودن دسته‌بندی جدید"
+
+def get_all_categories():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM categories ORDER BY id ASC")
+        rows = [r[0] for r in cur.fetchall()]
+        conn.close()
+        return rows if rows else list(DEFAULT_CATEGORIES)
+    except Exception:
+        return list(DEFAULT_CATEGORIES)
 
 JALALI_MONTHS = [
     "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
@@ -281,7 +316,7 @@ def init_db():
     """)
     try:
         cursor.execute("ALTER TABLE products ADD COLUMN sort_index INTEGER DEFAULT 0")
-        cursor.execute("UPDATE products SET sort_index = id") 
+        cursor.execute("UPDATE products SET sort_index = id")
     except Exception:
         pass
 
@@ -294,6 +329,23 @@ def init_db():
             order_date TEXT NOT NULL
         )
     """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL
+        )
+    """)
+    cursor.execute("SELECT COUNT(*) FROM categories")
+    if cursor.fetchone()[0] == 0:
+        for cat in DEFAULT_CATEGORIES:
+            cursor.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (cat,))
+
+    cursor.execute("SELECT DISTINCT category FROM products")
+    for (p_cat,) in cursor.fetchall():
+        if p_cat:
+            cursor.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (p_cat,))
+
     conn.commit()
     conn.close()
 
@@ -303,27 +355,153 @@ def format_price(val):
     except (ValueError, TypeError):
         return "0"
 
+# =====================================================================
+# موتور بک‌اند بکاپ، کد پشتیبان فشرده و بازیابی اطلاعات (Restore)
+# =====================================================================
+def get_public_download_dirs():
+    candidates = [
+        "/storage/emulated/0/Download",
+        "/sdcard/Download",
+        os.path.join(os.path.expanduser("~"), "Downloads"),
+    ]
+    valid = []
+    for d in candidates:
+        if d and os.path.isdir(d) and d not in valid:
+            valid.append(d)
+    return valid
+
 def perform_db_backup():
-    db_file = DB_NAME
-    backup_dir = "backups"
-    if not os.path.exists(db_file):
-        return False, "فایل پایگاه داده یافت نشد!"
-    
-    os.makedirs(backup_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_filename = f"cafe_backup_{timestamp}.db"
-    backup_path = os.path.join(backup_dir, backup_filename)
-    
+    if not os.path.exists(DB_NAME):
+        return False, "فایل پایگاه داده یافت نشد!", None
+
+    os.makedirs(INTERNAL_BACKUP_DIR, exist_ok=True)
+    now = datetime.now()
+    jy, jm, jd = gregorian_to_jalali(now.year, now.month, now.day)
+    timestamp = f"{jy}{jm:02d}{jd:02d}_{now.strftime('%H%M%S')}"
+    backup_filename = f"VitaHesab_{timestamp}.db"
+    internal_backup_path = os.path.join(INTERNAL_BACKUP_DIR, backup_filename)
+
     try:
-        source_conn = sqlite3.connect(db_file)
-        dest_conn = sqlite3.connect(backup_path)
+        source_conn = sqlite3.connect(DB_NAME)
+        dest_conn = sqlite3.connect(internal_backup_path)
         with dest_conn:
             source_conn.backup(dest_conn)
         dest_conn.close()
         source_conn.close()
-        return True, backup_filename
+
+        public_saved_path = None
+        for pub_dir in get_public_download_dirs():
+            try:
+                target_pub = os.path.join(pub_dir, backup_filename)
+                shutil.copy2(internal_backup_path, target_pub)
+                public_saved_path = target_pub
+                break
+            except Exception:
+                continue
+
+        return True, backup_filename, public_saved_path
+    except Exception as e:
+        return False, str(e), None
+
+def list_available_backups():
+    os.makedirs(INTERNAL_BACKUP_DIR, exist_ok=True)
+    files_map = {}
+
+    for folder in [INTERNAL_BACKUP_DIR] + get_public_download_dirs():
+        try:
+            for fname in os.listdir(folder):
+                if (fname.startswith("VitaHesab_") or fname.startswith("cafe_backup_")) and fname.endswith(".db"):
+                    fpath = os.path.join(folder, fname)
+                    if os.path.isfile(fpath) and fname not in files_map:
+                        stat = os.stat(fpath)
+                        dt = datetime.fromtimestamp(stat.st_mtime)
+                        jy, jm, jd = gregorian_to_jalali(dt.year, dt.month, dt.day)
+                        j_str = f"{jy}/{jm:02d}/{jd:02d} ساعت {dt.strftime('%H:%M')}"
+                        size_kb = max(1, int(stat.st_size / 1024))
+                        files_map[fname] = {
+                            "name": fname,
+                            "path": fpath,
+                            "mtime": stat.st_mtime,
+                            "jalali_str": j_str,
+                            "size_kb": size_kb,
+                            "is_public": folder != INTERNAL_BACKUP_DIR,
+                        }
+        except Exception:
+            continue
+
+    return sorted(files_map.values(), key=lambda x: x["mtime"], reverse=True)
+
+def restore_db_from_file(backup_file_path: str):
+    if not os.path.exists(backup_file_path):
+        return False, "فایل بکاپ یافت نشد!"
+    try:
+        with open(backup_file_path, "rb") as f:
+            header = f.read(16)
+        if not header.startswith(b"SQLite format 3"):
+            return False, "فایل انتخاب‌شده یک دیتابیس معتبر نیست!"
+
+        src_conn = sqlite3.connect(backup_file_path)
+        dst_conn = sqlite3.connect(DB_NAME)
+        with dst_conn:
+            src_conn.backup(dst_conn)
+        dst_conn.close()
+        src_conn.close()
+        init_db()
+        return True, "اطلاعات با موفقیت بازگردانی شد!"
+    except Exception as e:
+        return False, f"خطا در بازگردانی: {e}"
+
+def export_db_to_text_code():
+    try:
+        os.makedirs(INTERNAL_BACKUP_DIR, exist_ok=True)
+        temp_snap = os.path.join(INTERNAL_BACKUP_DIR, "_temp_snap.db")
+        src_conn = sqlite3.connect(DB_NAME)
+        dst_conn = sqlite3.connect(temp_snap)
+        with dst_conn:
+            src_conn.backup(dst_conn)
+        dst_conn.close()
+        src_conn.close()
+
+        with open(temp_snap, "rb") as f:
+            raw_bytes = f.read()
+        try:
+            os.remove(temp_snap)
+        except Exception:
+            pass
+
+        compressed = zlib.compress(raw_bytes, level=9)
+        b64_str = base64.b64encode(compressed).decode("ascii")
+        return True, BACKUP_CODE_PREFIX + b64_str
     except Exception as e:
         return False, str(e)
+
+def restore_db_from_text_code(code_str: str):
+    try:
+        clean = (code_str or "").strip()
+        if BACKUP_CODE_PREFIX in clean:
+            clean = clean.split(BACKUP_CODE_PREFIX, 1)[1].strip()
+        clean = re.sub(r"\s+", "", clean)
+        if not clean:
+            return False, "کد بکاپ وارد نشده است!"
+
+        compressed = base64.b64decode(clean)
+        raw_bytes = zlib.decompress(compressed)
+        if not raw_bytes.startswith(b"SQLite format 3"):
+            return False, "کد واردشده معتبر نیست!"
+
+        os.makedirs(INTERNAL_BACKUP_DIR, exist_ok=True)
+        temp_restore = os.path.join(INTERNAL_BACKUP_DIR, "_temp_restore.db")
+        with open(temp_restore, "wb") as f:
+            f.write(raw_bytes)
+
+        ok, msg = restore_db_from_file(temp_restore)
+        try:
+            os.remove(temp_restore)
+        except Exception:
+            pass
+        return ok, msg
+    except Exception:
+        return False, "کد بکاپ ناقص یا نامعتبر است!"
 
 
 def force_windows_icon(icon_filename: str, window_title: str):
@@ -335,8 +513,6 @@ def force_windows_icon(icon_filename: str, window_title: str):
         return
 
     import ctypes
-    import threading
-    import time
 
     def _worker():
         user32 = ctypes.windll.user32
@@ -409,9 +585,55 @@ def main(page: ft.Page):
     selected_j_year = init_jy
     selected_j_month = init_jm
 
+    # --- مدیریت سبک، سریع و بدون نشت حافظه برای دیالوگ‌ها و نوتیفیکیشن‌ها ---
+    snack_timer_ref = [None]
+    active_snack_ref = [None]
+
+    def open_ctrl(ctrl):
+        if hasattr(page, "open"):
+            try:
+                page.open(ctrl)
+                return
+            except Exception:
+                pass
+        if ctrl not in page.overlay:
+            page.overlay.append(ctrl)
+        ctrl.open = True
+        page.update()
+
+    def close_ctrl(ctrl):
+        if hasattr(page, "close"):
+            try:
+                page.close(ctrl)
+            except Exception:
+                pass
+        ctrl.open = False
+        if ctrl in page.overlay:
+            try:
+                page.overlay.remove(ctrl)
+            except Exception:
+                pass
+        page.update()
+
     def show_snackbar(message: str, bg_color="#0F172A"):
+        if snack_timer_ref[0] is not None:
+            try:
+                snack_timer_ref[0].cancel()
+            except Exception:
+                pass
+
+        if active_snack_ref[0] is not None:
+            old_s = active_snack_ref[0]
+            old_s.open = False
+            if old_s in page.overlay:
+                try:
+                    page.overlay.remove(old_s)
+                except Exception:
+                    pass
+
         snack = ft.SnackBar(
             content=ft.Row(
+                rtl=True,
                 spacing=10,
                 controls=[
                     ft.Container(
@@ -427,37 +649,82 @@ def main(page: ft.Page):
             behavior=ft.SnackBarBehavior.FLOATING,
             shape=ft.RoundedRectangleBorder(radius=14),
             margin=14,
-            duration=1000,
+            duration=1500,
         )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
+        active_snack_ref[0] = snack
+        open_ctrl(snack)
 
-    def show_confirm_dialog(title_text: str, message_text: str, on_confirm_callback):
+        def _auto_dismiss():
+            try:
+                close_ctrl(snack)
+            except Exception:
+                pass
+
+        t = threading.Timer(1.6, _auto_dismiss)
+        t.daemon = True
+        snack_timer_ref[0] = t
+        t.start()
+
+    def copy_to_clipboard(text_val: str) -> bool:
+        if os.name == "nt":
+            try:
+                import subprocess
+                subprocess.run(
+                    ["clip"],
+                    input=text_val.encode("utf-16-le"),
+                    check=True,
+                    creationflags=0x08000000
+                )
+                return True
+            except Exception:
+                pass
+        try:
+            if hasattr(page, "set_clipboard"):
+                page.set_clipboard(text_val)
+                return True
+            if hasattr(page, "clipboard"):
+                page.clipboard = text_val
+                return True
+        except Exception:
+            pass
+        return False
+
+    def show_confirm_dialog(
+        title_text: str,
+        message_text: str,
+        on_confirm_callback,
+        confirm_btn_text="بله، حذف شود",
+        confirm_color="#DC2626",
+        icon_data=None
+    ):
+        if icon_data is None:
+            icon_data = ft.icons.DELETE_SWEEP_ROUNDED if confirm_color == "#DC2626" else ft.icons.SETTINGS_BACKUP_RESTORE_ROUNDED
+        is_danger = (confirm_color == "#DC2626")
+
         def handle_yes(e):
-            confirm_dlg.open = False
-            page.update()
+            close_ctrl(confirm_dlg)
             on_confirm_callback()
 
         def handle_no(e):
-            confirm_dlg.open = False
-            page.update()
+            close_ctrl(confirm_dlg)
 
         confirm_dlg = ft.AlertDialog(
             modal=True,
+            rtl=True,
             shape=ft.RoundedRectangleBorder(radius=22),
             bgcolor=ft.colors.WHITE,
             surface_tint_color=ft.colors.WHITE,
             title=ft.Column(
+                rtl=True,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=10,
                 controls=[
                     ft.Container(
-                        content=ft.Icon(ft.icons.DELETE_SWEEP_ROUNDED, color="#DC2626", size=32),
-                        bgcolor="#FEF2F2",
+                        content=ft.Icon(icon_data, color=confirm_color, size=32),
+                        bgcolor="#FEF2F2" if is_danger else "#ECFDF5",
                         padding=16,
                         border_radius=50,
-                        border=ft.border.all(1, "#FECACA"),
+                        border=ft.border.all(1, "#FECACA" if is_danger else "#A7F3D0"),
                     ),
                     ft.Text(title_text, size=15, font_family="Vazir-Bold", color="#0F172A", text_align=ft.TextAlign.CENTER),
                 ]
@@ -470,6 +737,7 @@ def main(page: ft.Page):
             ),
             actions=[
                 ft.Row(
+                    rtl=True,
                     alignment=ft.MainAxisAlignment.CENTER,
                     spacing=10,
                     controls=[
@@ -483,12 +751,13 @@ def main(page: ft.Page):
                             on_click=handle_no
                         ),
                         ft.ElevatedButton(
-                            "بله، حذف شود",
+                            confirm_btn_text,
                             icon=ft.icons.CHECK_ROUNDED,
-                            bgcolor="#DC2626",
+                            bgcolor=confirm_color,
                             color=ft.colors.WHITE,
                             elevation=2,
                             height=40,
+                            rtl=True,
                             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
                             on_click=handle_yes
                         ),
@@ -496,23 +765,408 @@ def main(page: ft.Page):
                 )
             ],
         )
-        page.overlay.append(confirm_dlg)
-        confirm_dlg.open = True
-        page.update()
+        open_ctrl(confirm_dlg)
 
     def close_dialog(dlg):
-        dlg.open = False
-        page.update()
+        close_ctrl(dlg)
 
-    def handle_backup_click(e):
-        success, res = perform_db_backup()
-        if success:
-            show_snackbar(f"بکاپ با موفقیت در پوشه backups ذخیره شد:\n{res}", "#059669")
-        else:
-            show_snackbar(f"خطا در ایجاد بکاپ: {res}", "#DC2626")
+    def refresh_all_views():
+        refresh_category_dropdown()
+        refresh_header_today_sales()
+        render_cashier_category_chips()
+        load_cashier_products()
+        load_menu_products()
+        update_dashboard_controls()
+        load_dashboard_data()
 
+    # =========================================================================
+    # مرکز بکاپ و بازیابی اطلاعات (نسخه بهینه، بدون تکرار و دارای تایمر خودکار پیام)
+    # =========================================================================
+    def open_backup_manager_dialog(e):
+        backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.HIDDEN, height=185)
+        status_timer_ref = [None]
+        copy_timer_ref = [None]
 
-    # --- هدر لوکس بالای برنامه ---
+        backup_code_field = ft.TextField(
+            label="کد پشتیبان (برای بازیابی، کد را اینجا پیست کنید)",
+            hint_text="VITA_BKP_V1:...",
+            text_size=11,
+            height=44,
+            expand=True,
+            rtl=True,
+            text_align=ft.TextAlign.RIGHT,
+            content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
+            border_radius=10,
+            border_color="#CBD5E1",
+            bgcolor="#F8FAFC",
+        )
+
+        status_info_text = ft.Text(
+            "",
+            size=11,
+            color="#059669",
+            font_family="Vazir-Bold",
+            text_align=ft.TextAlign.CENTER,
+        )
+        status_banner = ft.Container(
+            visible=False,
+            bgcolor="#ECFDF5",
+            border=ft.border.all(1, "#A7F3D0"),
+            border_radius=10,
+            padding=ft.padding.symmetric(horizontal=10, vertical=6),
+            alignment=ft.alignment.center,
+            content=status_info_text,
+        )
+
+        def show_dialog_status(msg: str, is_error=False):
+            if status_timer_ref[0] is not None:
+                try:
+                    status_timer_ref[0].cancel()
+                except Exception:
+                    pass
+
+            status_info_text.value = msg
+            if is_error:
+                status_info_text.color = "#DC2626"
+                status_banner.bgcolor = "#FEF2F2"
+                status_banner.border = ft.border.all(1, "#FECACA")
+            else:
+                status_info_text.color = "#059669"
+                status_banner.bgcolor = "#ECFDF5"
+                status_banner.border = ft.border.all(1, "#A7F3D0")
+
+            status_banner.visible = True
+            page.update()
+
+            def _clear_status():
+                try:
+                    status_banner.visible = False
+                    status_info_text.value = ""
+                    page.update()
+                except Exception:
+                    pass
+
+            t = threading.Timer(2.2, _clear_status)
+            t.daemon = True
+            status_timer_ref[0] = t
+            t.start()
+
+        copy_btn = ft.ElevatedButton(
+            "کپی کد بکاپ",
+            icon=ft.icons.CONTENT_COPY_ROUNDED,
+            bgcolor="#EEF2FF",
+            color="#4F46E5",
+            elevation=0,
+            expand=1,
+            height=38,
+            rtl=True,
+            style=ft.ButtonStyle(
+                shape=ft.RoundedRectangleBorder(radius=10),
+                text_style=ft.TextStyle(size=10, font_family="Vazir-Bold")
+            )
+        )
+
+        def render_backups_list():
+            backups_list_col.controls.clear()
+            items = list_available_backups()
+            if not items:
+                backups_list_col.controls.append(
+                    ft.Container(
+                        bgcolor="#F8FAFC",
+                        border_radius=12,
+                        border=ft.border.all(1, "#E2E8F0"),
+                        padding=22,
+                        alignment=ft.alignment.center,
+                        content=ft.Column(
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=6,
+                            controls=[
+                                ft.Icon(ft.icons.FOLDER_OFF_OUTLINED, size=26, color="#94A3B8"),
+                                ft.Text("هنوز هیچ بکاپی ثبت نشده است.", size=11, color="#94A3B8", font_family="Vazir-Bold"),
+                            ]
+                        )
+                    )
+                )
+            else:
+                for item in items:
+                    b_path = item["path"]
+                    b_name = item["name"]
+                    b_date = item["jalali_str"]
+                    b_loc = "پوشه دانلود" if item["is_public"] else "حافظه برنامه"
+
+                    def ask_restore_item(e, path=b_path, dt_str=b_date):
+                        def do_restore():
+                            ok, msg = restore_db_from_file(path)
+                            if ok:
+                                close_ctrl(bkp_dlg)
+                                refresh_all_views()
+                                show_snackbar(f"اطلاعات به بکاپ ({dt_str}) بازگردانی شد.", "#059669")
+                            else:
+                                show_dialog_status(msg, is_error=True)
+
+                        show_confirm_dialog(
+                            "بازگردانی اطلاعات",
+                            f"آیا مطمئن هستید که اطلاعات فعلی برنامه با بکاپ تاریخ «{dt_str}» جایگزین شود؟",
+                            do_restore,
+                            confirm_btn_text="بله، بازگردانی شود",
+                            confirm_color="#059669"
+                        )
+
+                    def ask_delete_bkp(e, path=b_path, name=b_name):
+                        def do_del():
+                            try:
+                                if os.path.exists(path):
+                                    os.remove(path)
+                                inner_path = os.path.join(INTERNAL_BACKUP_DIR, name)
+                                if os.path.exists(inner_path):
+                                    os.remove(inner_path)
+                                render_backups_list()
+                                show_dialog_status("فایل بکاپ با موفقیت حذف شد 🗑", is_error=True)
+                            except Exception:
+                                pass
+
+                        show_confirm_dialog(
+                            "حذف فایل بکاپ",
+                            "آیا از حذف دائمی این فایل پشتیبان مطمئن هستید؟",
+                            do_del
+                        )
+
+                    backups_list_col.controls.append(
+                        ft.Container(
+                            bgcolor="#F8FAFC",
+                            border=ft.border.all(1, "#E2E8F0"),
+                            border_radius=12,
+                            padding=ft.padding.symmetric(horizontal=10, vertical=8),
+                            rtl=True,
+                            content=ft.Row(
+                                rtl=True,
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                controls=[
+                                    ft.Row(
+                                        rtl=True,
+                                        spacing=8,
+                                        controls=[
+                                            ft.Container(
+                                                content=ft.Icon(ft.icons.STORAGE_ROUNDED, size=18, color="#4F46E5"),
+                                                bgcolor="#EEF2FF",
+                                                padding=7,
+                                                border_radius=9,
+                                            ),
+                                            ft.Column(
+                                                spacing=2,
+                                                horizontal_alignment=ft.CrossAxisAlignment.START,
+                                                controls=[
+                                                    ft.Text(b_date, size=11, font_family="Vazir-Bold", color="#0F172A"),
+                                                    ft.Text(f"{b_loc} | {item['size_kb']} کیلوبایت", size=9, color="#64748B"),
+                                                ]
+                                            ),
+                                        ]
+                                    ),
+                                    ft.Row(
+                                        rtl=True,
+                                        spacing=5,
+                                        controls=[
+                                            ft.Container(
+                                                bgcolor="#DCFCE7",
+                                                border=ft.border.all(1, "#86EFAC"),
+                                                border_radius=8,
+                                                padding=ft.padding.symmetric(horizontal=8, vertical=5),
+                                                on_click=ask_restore_item,
+                                                tooltip="بازگردانی این بکاپ",
+                                                content=ft.Row(
+                                                    rtl=True,
+                                                    spacing=3,
+                                                    controls=[
+                                                        ft.Icon(ft.icons.SETTINGS_BACKUP_RESTORE_ROUNDED, size=14, color="#15803D"),
+                                                        ft.Text("بازگردانی", size=10, font_family="Vazir-Bold", color="#15803D"),
+                                                    ]
+                                                )
+                                            ),
+                                            ft.Container(
+                                                bgcolor="#FEF2F2",
+                                                width=30,
+                                                height=30,
+                                                border_radius=8,
+                                                alignment=ft.alignment.center,
+                                                on_click=ask_delete_bkp,
+                                                tooltip="حذف بکاپ",
+                                                content=ft.Icon(ft.icons.DELETE_OUTLINE_ROUNDED, size=16, color="#DC2626"),
+                                            ),
+                                        ]
+                                    ),
+                                ]
+                            )
+                        )
+                    )
+            page.update()
+
+        def create_new_backup_click(e):
+            ok, res, pub_path = perform_db_backup()
+            if ok:
+                render_backups_list()
+                if pub_path:
+                    show_dialog_status("بکاپ جدید در برنامه و پوشه دانلود ذخیره شد ✔", is_error=False)
+                else:
+                    show_dialog_status("بکاپ جدید با موفقیت ذخیره شد ✔", is_error=False)
+            else:
+                show_dialog_status(f"خطا: {res}", is_error=True)
+
+        def generate_and_copy_code_click(e):
+            ok, code_or_err = export_db_to_text_code()
+            if ok:
+                copy_to_clipboard(code_or_err)
+                if copy_timer_ref[0] is not None:
+                    try:
+                        copy_timer_ref[0].cancel()
+                    except Exception:
+                        pass
+
+                copy_btn.text = "کد کپی شد ✔"
+                copy_btn.icon = ft.icons.CHECK_CIRCLE_ROUNDED
+                copy_btn.bgcolor = "#D1FAE5"
+                copy_btn.color = "#059669"
+                page.update()
+
+                def _reset_copy_btn():
+                    try:
+                        copy_btn.text = "کپی کد بکاپ"
+                        copy_btn.icon = ft.icons.CONTENT_COPY_ROUNDED
+                        copy_btn.bgcolor = "#EEF2FF"
+                        copy_btn.color = "#4F46E5"
+                        page.update()
+                    except Exception:
+                        pass
+
+                t = threading.Timer(1.6, _reset_copy_btn)
+                t.daemon = True
+                copy_timer_ref[0] = t
+                t.start()
+            else:
+                show_dialog_status(f"خطا در ساخت کد: {code_or_err}", is_error=True)
+
+        copy_btn.on_click = generate_and_copy_code_click
+
+        def restore_from_code_click(e):
+            code_val = (backup_code_field.value or "").strip()
+            if not code_val:
+                show_dialog_status("لطفاً ابتدا کد بکاپ را در کادر پیست کنید!", is_error=True)
+                return
+
+            def confirmed_code_restore():
+                ok, msg = restore_db_from_text_code(code_val)
+                if ok:
+                    backup_code_field.value = ""
+                    close_ctrl(bkp_dlg)
+                    refresh_all_views()
+                    show_snackbar("اطلاعات با موفقیت از کد متنی بازیابی شد!", "#059669")
+                else:
+                    show_dialog_status(msg, is_error=True)
+
+            show_confirm_dialog(
+                "بازگردانی از کد متنی",
+                "آیا مطمئن هستید که اطلاعات فعلی با دیتای داخل این کد جایگزین شود؟",
+                confirmed_code_restore,
+                confirm_btn_text="بله، بازیابی شود",
+                confirm_color="#059669"
+            )
+
+        render_backups_list()
+
+        bkp_dlg = ft.AlertDialog(
+            modal=True,
+            rtl=True,
+            shape=ft.RoundedRectangleBorder(radius=20),
+            bgcolor=ft.colors.WHITE,
+            surface_tint_color=ft.colors.WHITE,
+            title=ft.Row(
+                rtl=True,
+                alignment=ft.MainAxisAlignment.START,
+                spacing=8,
+                controls=[
+                    ft.Container(
+                        content=ft.Icon(ft.icons.CLOUD_SYNC_ROUNDED, color="#4F46E5", size=20),
+                        bgcolor="#EEF2FF",
+                        padding=7,
+                        border_radius=10,
+                    ),
+                    ft.Text("مرکز بکاپ و بازیابی اطلاعات", size=14, font_family="Vazir-Bold", color="#0F172A"),
+                ]
+            ),
+            content=ft.Container(
+                width=335,
+                rtl=True,
+                content=ft.Column(
+                    rtl=True,
+                    spacing=8,
+                    tight=True,
+                    horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                    controls=[
+                        ft.Row(
+                            rtl=True,
+                            controls=[
+                                ft.ElevatedButton(
+                                    "ثبت بکاپ جدید (در برنامه + پوشه دانلود)",
+                                    icon=ft.icons.ADD_TASK_ROUNDED,
+                                    bgcolor="#059669",
+                                    color=ft.colors.WHITE,
+                                    height=42,
+                                    expand=True,
+                                    rtl=True,
+                                    style=ft.ButtonStyle(
+                                        shape=ft.RoundedRectangleBorder(radius=11),
+                                        text_style=ft.TextStyle(size=11, font_family="Vazir-Bold")
+                                    ),
+                                    on_click=create_new_backup_click
+                                )
+                            ]
+                        ),
+                        status_banner,
+                        ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color="#334155"),
+                        backups_list_col,
+                        ft.Container(height=1, bgcolor="#E2E8F0", margin=ft.padding.symmetric(vertical=2)),
+                        ft.Text("پشتیبان‌گیری متنی (مخصوص تلگرام و انتقال):", size=10, font_family="Vazir-Bold", color="#4F46E5"),
+                        ft.Row(rtl=True, controls=[backup_code_field]),
+                        ft.Row(
+                            rtl=True,
+                            spacing=8,
+                            controls=[
+                                copy_btn,
+                                ft.ElevatedButton(
+                                    "بازگردانی از کد",
+                                    icon=ft.icons.DOWNLOAD_DONE_ROUNDED,
+                                    bgcolor="#4F46E5",
+                                    color=ft.colors.WHITE,
+                                    elevation=0,
+                                    expand=1,
+                                    height=38,
+                                    rtl=True,
+                                    style=ft.ButtonStyle(
+                                        shape=ft.RoundedRectangleBorder(radius=10),
+                                        text_style=ft.TextStyle(size=10, font_family="Vazir-Bold")
+                                    ),
+                                    on_click=restore_from_code_click
+                                ),
+                            ]
+                        ),
+                    ]
+                )
+            ),
+            actions=[
+                ft.Container(
+                    rtl=True,
+                    content=ft.Row(
+                        rtl=True,
+                        alignment=ft.MainAxisAlignment.END,
+                        controls=[
+                            ft.TextButton("بستن پنجره", on_click=lambda e: close_ctrl(bkp_dlg))
+                        ]
+                    )
+                )
+            ],
+        )
+        open_ctrl(bkp_dlg)
+
+    # --- هدر بالای برنامه ---
     today_jy, today_jm, today_jd = gregorian_to_jalali(now_dt.year, now_dt.month, now_dt.day)
     today_badge_str = f"{today_jd} {JALALI_MONTHS[today_jm - 1]} {today_jy}"
     header_today_sales_text = ft.Text("0 تومان", size=9, font_family="Vazir-Bold", color=ft.colors.GREEN_400)
@@ -525,7 +1179,7 @@ def main(page: ft.Page):
         val = cursor.fetchone()[0]
         conn.close()
         header_today_sales_text.value = f"{format_price(val)} تومان"
-        
+
     backup_btn = ft.Container(
         content=ft.Row(
             spacing=4,
@@ -537,8 +1191,8 @@ def main(page: ft.Page):
         bgcolor=ft.colors.with_opacity(0.18, ft.colors.WHITE),
         padding=ft.padding.symmetric(horizontal=8, vertical=4),
         border_radius=12,
-        on_click=handle_backup_click,
-        tooltip="ایجاد نسخه پشتیبان از دیتابیس",
+        on_click=open_backup_manager_dialog,
+        tooltip="مرکز بکاپ و بازیابی اطلاعات",
     )
 
     top_app_header = ft.Container(
@@ -618,27 +1272,63 @@ def main(page: ft.Page):
         render_cashier_category_chips()
         load_cashier_products()
 
+    def ask_delete_category(cat_name: str):
+        if cat_name == "همه":
+            return
+
+        def confirmed_delete_cat():
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM categories WHERE name = ?", (cat_name,))
+            conn.commit()
+            conn.close()
+
+            nonlocal selected_cashier_category
+            if selected_cashier_category == cat_name:
+                selected_cashier_category = "همه"
+
+            refresh_category_dropdown()
+            render_cashier_category_chips()
+            load_cashier_products()
+            show_snackbar(f"دسته‌بندی «{cat_name}» حذف شد.", ft.colors.RED_700)
+
+        show_confirm_dialog(
+            "حذف دسته‌بندی",
+            f"آیا از حذف دسته‌بندی «{cat_name}» مطمئن هستید؟\n(محصولات ثبت‌شده در این دسته حذف نمی‌شوند)",
+            confirmed_delete_cat
+        )
+
     def render_cashier_category_chips():
         cashier_categories_row.controls.clear()
-        all_cats = ["همه"] + CATEGORIES_LIST
+        all_cats = ["همه"] + get_all_categories()
         for c in all_cats:
             is_sel = (selected_cashier_category == c)
-            cashier_categories_row.controls.append(
-                ft.Container(
-                    bgcolor="#4F46E5" if is_sel else ft.colors.WHITE,
-                    border=ft.border.all(1, "#4F46E5" if is_sel else ft.colors.BLUE_GREY_200),
-                    border_radius=20,
-                    padding=ft.padding.symmetric(horizontal=12, vertical=6),
-                    on_click=lambda e, cat=c: select_cashier_category(cat),
-                    shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.15 if is_sel else 0.03, "#4F46E5"), offset=ft.Offset(0, 2)),
-                    content=ft.Text(
-                        c,
-                        size=11,
-                        font_family="Vazir-Bold" if is_sel else "Vazir",
-                        color=ft.colors.WHITE if is_sel else "#475569"
-                    )
+            chip_box = ft.Container(
+                bgcolor="#4F46E5" if is_sel else ft.colors.WHITE,
+                border=ft.border.all(1, "#4F46E5" if is_sel else ft.colors.BLUE_GREY_200),
+                border_radius=20,
+                padding=ft.padding.symmetric(horizontal=12, vertical=6),
+                tooltip="نگه داشتن طولانی برای حذف دسته‌بندی" if c != "همه" else None,
+                shadow=ft.BoxShadow(
+                    blur_radius=6,
+                    color=ft.colors.with_opacity(0.15 if is_sel else 0.03, "#4F46E5"),
+                    offset=ft.Offset(0, 2)
+                ),
+                content=ft.Text(
+                    c,
+                    size=11,
+                    font_family="Vazir-Bold" if is_sel else "Vazir",
+                    color=ft.colors.WHITE if is_sel else "#475569"
                 )
             )
+            chip_gesture = ft.GestureDetector(
+                mouse_cursor=ft.MouseCursor.CLICK,
+                on_tap=lambda e, cat=c: select_cashier_category(cat),
+                on_long_press_start=(lambda e, cat=c: ask_delete_category(cat)) if c != "همه" else None,
+                on_secondary_tap=(lambda e, cat=c: ask_delete_category(cat)) if c != "همه" else None,
+                content=chip_box
+            )
+            cashier_categories_row.controls.append(chip_gesture)
         page.update()
 
     def on_search_change(e):
@@ -669,8 +1359,34 @@ def main(page: ft.Page):
             "بستنی بارها": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
             "نوشیدنی‌های گرم": (ft.icons.LOCAL_DRINK_ROUNDED, "#B91C1C", "#FEE2E2", "#FECACA"),
             "چای‌ها": (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0"),
+            "کیک و دسر": (ft.icons.COOKIE_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A"),
         }
-        return styles.get(cat, (ft.icons.LOCAL_CAFE_ROUNDED, "#4338CA", "#EEF2FF", "#C7D2FE"))
+        if cat in styles:
+            return styles[cat]
+
+        if any(w in cat for w in ("کیک", "دسر", "شیرینی", "کوکی", "کروسان", "وافل", "پنکیک")):
+            return (ft.icons.BAKERY_DINING_ROUNDED, "#E11D48", "#FFE4E6", "#FECDD3")
+        if any(w in cat for w in ("سرد", "آیس", "فراپه", "ماکتیل", "اسموتی", "آب‌میوه")):
+            return (ft.icons.LOCAL_BAR_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD")
+        if any(w in cat for w in ("چای", "دمنوش", "گیاهی")):
+            return (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0")
+        if any(w in cat for w in ("قهوه", "اسپرسو", "دمی", "ترک")):
+            return (ft.icons.COFFEE_ROUNDED, "#78350F", "#FEF3C7", "#FDE68A")
+        if any(w in cat for w in ("غذا", "صبحانه", "اسنک", "پنینی", "پاستا", "ساندویچ", "تست")):
+            return (ft.icons.RESTAURANT_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA")
+        if any(w in cat for w in ("بستنی", "شیک")):
+            return (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8")
+
+        fallback_palettes = [
+            (ft.icons.LOCAL_CAFE_ROUNDED, "#4338CA", "#EEF2FF", "#C7D2FE"),
+            (ft.icons.RESTAURANT_MENU_ROUNDED, "#0F766E", "#CCFBF1", "#99F6E4"),
+            (ft.icons.COOKIE_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A"),
+            (ft.icons.LOCAL_DRINK_ROUNDED, "#9333EA", "#F3E8FF", "#E9D5FF"),
+            (ft.icons.BAKERY_DINING_ROUNDED, "#BE123C", "#FFE4E6", "#FECDD3"),
+            (ft.icons.WINE_BAR_ROUNDED, "#1D4ED8", "#DBEAFE", "#BFDBFE"),
+        ]
+        idx = sum(ord(ch) for ch in cat) % len(fallback_palettes)
+        return fallback_palettes[idx]
 
     def load_cashier_products():
         cashier_products_col.controls.clear()
@@ -738,7 +1454,6 @@ def main(page: ft.Page):
                     conn.close()
 
                     refresh_header_today_sales()
-                    load_cashier_products()
                     show_snackbar(f"یک عدد «{prod[1]}» در فاکتور ثبت شد.", "#059669")
 
                 card = ft.Container(
@@ -768,7 +1483,7 @@ def main(page: ft.Page):
                                             ft.Text(p_name, font_family="Vazir-Bold", size=13, color="#0F172A"),
                                             ft.Row(
                                                 spacing=6,
-                                                wrap=True, 
+                                                wrap=True,
                                                 controls=[
                                                     ft.Container(
                                                         content=ft.Text(p_cat, size=9, color=cat_color, font_family="Vazir-Bold"),
@@ -805,7 +1520,7 @@ def main(page: ft.Page):
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM orders")
             total_orders = cursor.fetchone()[0]
-            
+
             cursor.execute("SELECT id, product_name, sell_price, order_date FROM orders ORDER BY id DESC LIMIT 25")
             rows = cursor.fetchall()
             conn.close()
@@ -829,11 +1544,11 @@ def main(page: ft.Page):
                             conn_del = sqlite3.connect(DB_NAME)
                             cur_del = conn_del.cursor()
                             cur_del.execute("DELETE FROM orders WHERE id = ?", (order_id,))
-                            
+
                             cur_del.execute("SELECT COUNT(*) FROM orders")
                             if cur_del.fetchone()[0] == 0:
                                 cur_del.execute("DELETE FROM sqlite_sequence WHERE name='orders'")
-                                
+
                             conn_del.commit()
                             conn_del.close()
                             refresh_header_today_sales()
@@ -855,10 +1570,35 @@ def main(page: ft.Page):
                             padding=10,
                             content=ft.Row(
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                rtl=True,
                                 controls=[
+                                    ft.Container(
+                                        content=ft.Text(f"{display_num}", size=11, font_family="Vazir-Bold", color="#4F46E5"),
+                                        bgcolor="#EEF2FF",
+                                        padding=ft.padding.symmetric(horizontal=8, vertical=5),
+                                        border_radius=8,
+                                    ),
                                     ft.Row(
-                                        spacing=8,
+                                        rtl=True,
+                                        spacing=12,
                                         controls=[
+                                            ft.Column(
+                                                spacing=2,
+                                                horizontal_alignment=ft.CrossAxisAlignment.START,
+                                                controls=[
+                                                    ft.Text(o_name, size=12, font_family="Vazir-Bold", color="#0F172A"),
+                                                    ft.Row(
+                                                        rtl=True,
+                                                        spacing=4,
+                                                        controls=[
+                                                            ft.Text(f"{format_price(o_price)}", size=10, font_family="Vazir-Bold", color="#64748B"),
+                                                            ft.Text("تومان", size=10, color="#64748B"),
+                                                            ft.Text("|", size=9, color="#CBD5E1"),
+                                                            ft.Text(jalali_dt, size=10, color="#64748B")
+                                                        ]
+                                                    )
+                                                ]
+                                            ),
                                             ft.Container(
                                                 content=ft.Icon(ft.icons.DELETE_FOREVER_ROUNDED, color=ft.colors.RED_600, size=18),
                                                 bgcolor=ft.colors.RED_50,
@@ -866,29 +1606,8 @@ def main(page: ft.Page):
                                                 on_click=ask_delete_order,
                                                 tooltip="لغو این سفارش"
                                             ),
-                                            ft.Column(
-                                                spacing=2,
-                                                controls=[
-                                                    ft.Text(o_name, size=12, font_family="Vazir-Bold", color="#0F172A"),
-                                                    ft.Row(
-                                                        spacing=4,
-                                                        controls=[
-                                                            ft.Text("تومان", size=10, color="#64748B"),
-                                                            ft.Text(f"{format_price(o_price)}", size=10, font_family="Vazir-Bold", color="#64748B"),
-                                                            ft.Text("|", size=9, color="#CBD5E1"),
-                                                            ft.Text(jalali_dt, size=10, color="#64748B")
-                                                        ]
-                                                    )
-                                                ]
-                                            ),
                                         ]
                                     ),
-                                    ft.Container(
-                                        content=ft.Text(f"{display_num}", size=11, font_family="Vazir-Bold", color="#4F46E5"),
-                                        bgcolor="#EEF2FF",
-                                        padding=ft.padding.symmetric(horizontal=8, vertical=5),
-                                        border_radius=8,
-                                    )
                                 ]
                             )
                         )
@@ -898,7 +1617,14 @@ def main(page: ft.Page):
         load_recent_orders()
 
         dlg = ft.AlertDialog(
+            modal=True,
+            rtl=True,
+            shape=ft.RoundedRectangleBorder(radius=20),
+            bgcolor=ft.colors.WHITE,
+            surface_tint_color=ft.colors.WHITE,
             title=ft.Row(
+                rtl=True,
+                alignment=ft.MainAxisAlignment.START,
                 spacing=8,
                 controls=[
                     ft.Container(
@@ -910,18 +1636,24 @@ def main(page: ft.Page):
                     ft.Text("فاکتورهای اخیر (لغو سفارش)", size=14, font_family="Vazir-Bold", color="#0F172A"),
                 ]
             ),
-            content=orders_list_col,
-            bgcolor=ft.colors.WHITE,
-            surface_tint_color=ft.colors.WHITE,
-            shape=ft.RoundedRectangleBorder(radius=20),
+            content=ft.Container(
+                rtl=True,
+                content=orders_list_col
+            ),
             actions=[
-                ft.TextButton("بستن پنجره", on_click=lambda e: close_dialog(dlg))
+                ft.Container(
+                    rtl=True,
+                    content=ft.Row(
+                        rtl=True,
+                        alignment=ft.MainAxisAlignment.END,
+                        controls=[
+                            ft.TextButton("بستن پنجره", on_click=lambda e: close_dialog(dlg))
+                        ]
+                    )
+                )
             ],
-            actions_alignment=ft.MainAxisAlignment.END
         )
-        page.overlay.append(dlg)
-        dlg.open = True
-        page.update()
+        open_ctrl(dlg)
 
     cashier_view = ft.Container(
         padding=16,
@@ -959,24 +1691,24 @@ def main(page: ft.Page):
     )
 
     # =========================================================================
-    # 2. تب مدیریت منو (با نمایش زنده حروف فارسی و سود خالص)
+    # 2. تب مدیریت منو (با نمایش زنده حروف فارسی، سود خالص و دسته‌بندی پویا)
     # =========================================================================
     def move_product(prod_id, current_sort, direction):
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        
+
         if direction == "up":
             cursor.execute("SELECT id, sort_index FROM products WHERE sort_index < ? ORDER BY sort_index DESC LIMIT 1", (current_sort,))
         else:
             cursor.execute("SELECT id, sort_index FROM products WHERE sort_index > ? ORDER BY sort_index ASC LIMIT 1", (current_sort,))
-            
+
         adjacent = cursor.fetchone()
         if adjacent:
             adj_id, adj_sort = adjacent
             cursor.execute("UPDATE products SET sort_index = ? WHERE id = ?", (adj_sort, prod_id))
             cursor.execute("UPDATE products SET sort_index = ? WHERE id = ?", (current_sort, adj_id))
             conn.commit()
-        
+
         conn.close()
         load_menu_products()
         load_cashier_products()
@@ -991,6 +1723,101 @@ def main(page: ft.Page):
         bgcolor="#F8FAFC",
         expand=1
     )
+
+    new_cat_input = ft.TextField(
+        label="نام دسته‌بندی جدید (مثلاً: ماکتیل‌ها)",
+        text_size=12,
+        height=44,
+        border_radius=10,
+        border_color="#CBD5E1",
+        bgcolor="#F8FAFC",
+        autofocus=True,
+        rtl=True,
+        text_align=ft.TextAlign.RIGHT,
+    )
+
+    def submit_new_category(e):
+        c_name = (new_cat_input.value or "").strip()
+        if not c_name or c_name == ADD_CAT_OPTION or c_name == "همه":
+            show_snackbar("لطفاً یک نام معتبر برای دسته‌بندی وارد کنید!", ft.colors.RED_700)
+            return
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO categories (name) VALUES (?)", (c_name,))
+            conn.commit()
+            conn.close()
+            new_cat_input.value = ""
+            close_ctrl(cat_dialog)
+            refresh_category_dropdown(selected=c_name)
+            render_cashier_category_chips()
+            show_snackbar(f"دسته‌بندی «{c_name}» با موفقیت اضافه شد.", "#059669")
+        except sqlite3.IntegrityError:
+            show_snackbar("این دسته‌بندی از قبل در لیست وجود دارد!", ft.colors.RED_700)
+
+    new_cat_input.on_submit = submit_new_category
+
+    cat_dialog = ft.AlertDialog(
+        modal=True,
+        rtl=True,
+        shape=ft.RoundedRectangleBorder(radius=18),
+        bgcolor=ft.colors.WHITE,
+        surface_tint_color=ft.colors.WHITE,
+        title=ft.Row(
+            rtl=True,
+            alignment=ft.MainAxisAlignment.START,
+            spacing=8,
+            controls=[
+                ft.Container(
+                    content=ft.Icon(ft.icons.CREATE_NEW_FOLDER_ROUNDED, color="#059669", size=20),
+                    bgcolor="#D1FAE5",
+                    padding=7,
+                    border_radius=10,
+                ),
+                ft.Text("افزودن دسته‌بندی جدید", size=14, font_family="Vazir-Bold", color="#0F172A"),
+            ]
+        ),
+        content=ft.Container(
+            width=280,
+            rtl=True,
+            padding=ft.padding.only(top=6),
+            content=new_cat_input
+        ),
+        actions=[
+            ft.Container(
+                width=280,
+                rtl=True,
+                content=ft.Row(
+                    rtl=True,
+                    alignment=ft.MainAxisAlignment.END,
+                    spacing=8,
+                    controls=[
+                        ft.TextButton("انصراف", on_click=lambda e: close_ctrl(cat_dialog)),
+                        ft.ElevatedButton(
+                            "افزودن",
+                            icon=ft.icons.ADD_ROUNDED,
+                            bgcolor="#059669",
+                            color=ft.colors.WHITE,
+                            height=38,
+                            rtl=True,
+                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                            on_click=submit_new_category
+                        ),
+                    ]
+                )
+            )
+        ],
+    )
+
+    def on_category_dropdown_change(e):
+        chosen = category_dropdown.value or getattr(e, "data", None)
+        if chosen == ADD_CAT_OPTION:
+            cats = get_all_categories()
+            category_dropdown.value = cats[0] if cats else None
+            new_cat_input.value = ""
+            page.update()
+            open_ctrl(cat_dialog)
+
     category_dropdown = ft.Dropdown(
         label="دسته‌بندی",
         height=44,
@@ -1000,13 +1827,39 @@ def main(page: ft.Page):
         border_color="#CBD5E1",
         bgcolor="#F8FAFC",
         expand=1,
-        value="قهوه‌ها",
-        options=[ft.dropdown.Option(c) for c in CATEGORIES_LIST]
+        on_change=on_category_dropdown_change,
+        on_select=on_category_dropdown_change,
     )
+
+    def refresh_category_dropdown(selected: str = None):
+        cats = get_all_categories()
+        opts = [ft.dropdown.Option(c) for c in cats]
+        opts.append(ft.dropdown.Option(ADD_CAT_OPTION))
+        category_dropdown.options = opts
+
+        if selected and selected in cats:
+            category_dropdown.value = selected
+        elif category_dropdown.value not in cats:
+            category_dropdown.value = cats[0] if cats else None
+        page.update()
 
     cost_words_text = ft.Text("صفر تومان", size=10, color="#B45309", font_family="Vazir-Bold")
     sell_words_text = ft.Text("صفر تومان", size=10, color="#047857", font_family="Vazir-Bold")
-    live_profit_preview_text = ft.Text("سود خالص هر واحد: 0 تومان", size=11, color="#4338CA", font_family="Vazir-Bold")
+    live_profit_preview_text = ft.Text("لطفاً قیمت پایه و فروش را وارد کنید", size=11, color="#4338CA", font_family="Vazir-Bold")
+
+    submit_product_btn = ft.ElevatedButton(
+        "ذخیره در منوی کافه",
+        icon=ft.icons.CHECK_CIRCLE_ROUNDED,
+        bgcolor="#94A3B8",
+        color=ft.colors.WHITE,
+        expand=True,
+        height=42,
+        disabled=True,
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=10),
+            text_style=ft.TextStyle(size=12, font_family="Vazir-Bold")
+        )
+    )
 
     def update_live_profit_preview():
         c_raw = (cost_input.value or "").replace(",", "").strip()
@@ -1014,13 +1867,23 @@ def main(page: ft.Page):
         c_num = int(c_raw) if c_raw.isdigit() else 0
         s_num = int(s_raw) if s_raw.isdigit() else 0
         diff = s_num - c_num
-        margin_pct = int((diff / s_num) * 100) if s_num > 0 else 0
-        if diff >= 0:
+
+        if s_raw == "" or c_raw == "":
+            live_profit_preview_text.value = "لطفاً قیمت پایه و فروش را وارد کنید"
+            live_profit_preview_text.color = "#4338CA"
+            submit_product_btn.disabled = True
+            submit_product_btn.bgcolor = "#94A3B8"
+        elif diff > 0:
+            margin_pct = int((diff / s_num) * 100) if s_num > 0 else 0
             live_profit_preview_text.value = f"سود خالص هر فروش: {format_price(diff)} تومان ({margin_pct}٪ سود)"
             live_profit_preview_text.color = "#047857"
+            submit_product_btn.disabled = False
+            submit_product_btn.bgcolor = "#D97706" if editing_product_id else "#4F46E5"
         else:
-            live_profit_preview_text.value = f"زیان هر فروش: {format_price(abs(diff))} تومان (قیمت فروش کمتر از خرید است!)"
+            live_profit_preview_text.value = f"زیان یا بدون سود: {format_price(abs(diff))} تومان (غیرقابل ثبت!)"
             live_profit_preview_text.color = "#DC2626"
+            submit_product_btn.disabled = True
+            submit_product_btn.bgcolor = "#94A3B8"
 
     def on_cost_price_change(e):
         digits = "".join([c for c in (e.control.value or "") if c.isdigit()])
@@ -1067,19 +1930,6 @@ def main(page: ft.Page):
         border_color="#CBD5E1",
         bgcolor="#F8FAFC",
         on_change=on_sell_price_change
-    )
-
-    submit_product_btn = ft.ElevatedButton(
-        "ذخیره در منوی کافه",
-        icon=ft.icons.CHECK_CIRCLE_ROUNDED,
-        bgcolor="#4F46E5",
-        color=ft.colors.WHITE,
-        expand=True,
-        height=42,
-        style=ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=10),
-            text_style=ft.TextStyle(size=12, font_family="Vazir-Bold")
-        )
     )
 
     cancel_edit_btn = ft.Container(
@@ -1187,16 +2037,18 @@ def main(page: ft.Page):
         nonlocal editing_product_id
         editing_product_id = None
         name_input.value = ""
-        category_dropdown.value = "قهوه‌ها"
+        cats = get_all_categories()
+        category_dropdown.value = cats[0] if cats else None
         cost_input.value = ""
         sell_input.value = ""
         cost_words_text.value = "صفر تومان"
         sell_words_text.value = "صفر تومان"
-        live_profit_preview_text.value = "سود خالص هر واحد: 0 تومان"
+        live_profit_preview_text.value = "لطفاً قیمت پایه و فروش را وارد کنید"
         live_profit_preview_text.color = "#4338CA"
         submit_product_btn.text = "ذخیره در منوی کافه"
         submit_product_btn.icon = ft.icons.CHECK_CIRCLE_ROUNDED
-        submit_product_btn.bgcolor = "#4F46E5"
+        submit_product_btn.bgcolor = "#94A3B8"
+        submit_product_btn.disabled = True
         toggle_form(False)
 
     cancel_edit_btn.on_click = lambda e: reset_menu_form()
@@ -1208,8 +2060,8 @@ def main(page: ft.Page):
         cost_str = cost_input.value.strip().replace(",", "")
         sell_str = sell_input.value.strip().replace(",", "")
 
-        if not name or not cost_str or not sell_str:
-            show_snackbar("لطفاً نام محصول و هر دو قیمت را وارد کنید!", ft.colors.RED_700)
+        if not name or not cost_str or not sell_str or not cat or cat == ADD_CAT_OPTION:
+            show_snackbar("لطفاً نام محصول، دسته‌بندی و هر دو قیمت را وارد کنید!", ft.colors.RED_700)
             return
 
         try:
@@ -1219,6 +2071,10 @@ def main(page: ft.Page):
             show_snackbar("قیمت خرید و فروش باید عدد باشند!", ft.colors.RED_700)
             return
 
+        if sell_val <= cost_val:
+            show_snackbar("خطا: قیمت فروش باید حتماً بیشتر از قیمت پایه باشد!", ft.colors.RED_700)
+            return
+
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
@@ -1226,7 +2082,7 @@ def main(page: ft.Page):
             cursor.execute("SELECT MAX(sort_index) FROM products")
             max_sort = cursor.fetchone()[0]
             new_sort = (max_sort or 0) + 1
-            
+
             cursor.execute("""
                 INSERT INTO products (name, category, cost_price, sell_price, sort_index)
                 VALUES (?, ?, ?, ?, ?)
@@ -1235,13 +2091,13 @@ def main(page: ft.Page):
         else:
             cursor.execute("SELECT name FROM products WHERE id = ?", (editing_product_id,))
             old_name_row = cursor.fetchone()
-            
+
             cursor.execute("""
                 UPDATE products
                 SET name = ?, category = ?, cost_price = ?, sell_price = ?
                 WHERE id = ?
             """, (name, cat, cost_val, sell_val, editing_product_id))
-            
+
             if old_name_row:
                 old_name = old_name_row[0]
                 if old_name != name:
@@ -1293,7 +2149,7 @@ def main(page: ft.Page):
                     nonlocal editing_product_id
                     editing_product_id = prod[0]
                     name_input.value = prod[1]
-                    category_dropdown.value = prod[2]
+                    refresh_category_dropdown(selected=prod[2])
 
                     c_val = int(prod[3])
                     s_val = int(prod[4])
@@ -1304,10 +2160,9 @@ def main(page: ft.Page):
                     sell_input.value = f"{s_val:,}"
                     sell_words_text.value = f"{num_to_persian(s_val)} تومان" if s_val > 0 else "صفر تومان"
 
-                    update_live_profit_preview()
                     submit_product_btn.text = "ذخیره تغییرات"
                     submit_product_btn.icon = ft.icons.UPDATE_ROUNDED
-                    submit_product_btn.bgcolor = "#D97706"
+                    update_live_profit_preview()
                     toggle_form(True)
                     page.update()
 
@@ -1487,18 +2342,18 @@ def main(page: ft.Page):
 
         def render_calendar_grid():
             jy, jm = cal_state["jy"], cal_state["jm"]
-            
+
             max_days = get_jalali_month_days(jy, jm)
             if cal_state["jd"] > max_days:
                 cal_state["jd"] = max_days
             jd = cal_state["jd"]
-            
+
             gy, gm, gd = jalali_to_gregorian(jy, jm, jd)
             target_date = datetime(gy, gm, gd)
             weekday_idx = (target_date.weekday() + 2) % 7
             weekdays_names = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه"]
             day_name = weekdays_names[weekday_idx]
-            
+
             cal_header_text.value = f"{day_name}، {jd} {JALALI_MONTHS[jm - 1]} {jy}"
             days_grid_col.controls.clear()
 
@@ -1512,7 +2367,7 @@ def main(page: ft.Page):
                         content=ft.Text(w, size=11, color="#4F46E5", font_family="Vazir-Bold")
                     )
                 )
-            
+
             days_grid_col.controls.append(
                 ft.Container(
                     margin=ft.padding.only(bottom=6),
@@ -1537,7 +2392,7 @@ def main(page: ft.Page):
                     nonlocal selected_date
                     gy_pick, gm_pick, gd_pick = jalali_to_gregorian(cal_state["jy"], cal_state["jm"], day_num)
                     selected_date = datetime(gy_pick, gm_pick, gd_pick)
-                    cal_dlg.open = False
+                    close_ctrl(cal_dlg)
                     update_dashboard_controls()
                     load_dashboard_data()
 
@@ -1568,7 +2423,7 @@ def main(page: ft.Page):
                 days_grid_col.controls.append(
                     ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=row_buttons[::-1])
                 )
-            
+
             page.update()
 
         def change_cal_month(delta: int):
@@ -1587,13 +2442,14 @@ def main(page: ft.Page):
             nonlocal selected_date
             now_t = datetime.now()
             selected_date = datetime(now_t.year, now_t.month, now_t.day)
-            cal_dlg.open = False
+            close_ctrl(cal_dlg)
             update_dashboard_controls()
             load_dashboard_data()
 
         render_calendar_grid()
 
         cal_dlg = ft.AlertDialog(
+            rtl=True,
             shape=ft.RoundedRectangleBorder(radius=20),
             bgcolor=ft.colors.WHITE,
             surface_tint_color=ft.colors.WHITE,
@@ -1624,6 +2480,7 @@ def main(page: ft.Page):
             ),
             actions=[
                 ft.Row(
+                    rtl=True,
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
                         ft.ElevatedButton(
@@ -1635,9 +2492,7 @@ def main(page: ft.Page):
                 )
             ]
         )
-        page.overlay.append(cal_dlg)
-        cal_dlg.open = True
-        page.update()
+        open_ctrl(cal_dlg)
 
     def switch_filter_mode(new_mode: str):
         nonlocal filter_mode
@@ -2046,6 +2901,7 @@ def main(page: ft.Page):
     def on_nav_change(e):
         idx = e.control.selected_index
         if idx == 0:
+            refresh_category_dropdown()
             load_menu_products()
             body_container.content = menu_view
         elif idx == 1:
@@ -2085,6 +2941,7 @@ def main(page: ft.Page):
         ]
     )
 
+    refresh_category_dropdown()
     refresh_header_today_sales()
     render_cashier_category_chips()
     load_cashier_products()

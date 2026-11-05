@@ -37,7 +37,7 @@ if hasattr(ft, "Colors"):
         def __getattr__(self, name):
             if hasattr(ft.Colors, name):
                 return getattr(ft.Colors, name)
-            return "#4F46E5"
+            return "#9C623E"
         @staticmethod
         def with_opacity(opacity, color):
             if hasattr(ft.Colors, "with_opacity"):
@@ -76,7 +76,7 @@ class _CompatBorder:
         if hasattr(ft, "Border"):
             if hasattr(ft.Border, "all"):
                 return ft.Border.all(width, color)
-            if hasattr(ft.Border, "BorderSide"):
+            if hasattr(ft, "BorderSide"):
                 side = ft.BorderSide(width, color)
                 return ft.Border(top=side, bottom=side, left=side, right=side)
         return None
@@ -341,11 +341,6 @@ def init_db():
         for cat in DEFAULT_CATEGORIES:
             cursor.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (cat,))
 
-    cursor.execute("SELECT DISTINCT category FROM products")
-    for (p_cat,) in cursor.fetchall():
-        if p_cat:
-            cursor.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (p_cat,))
-
     conn.commit()
     conn.close()
 
@@ -552,11 +547,42 @@ def force_windows_icon(icon_filename: str, window_title: str):
 def main(page: ft.Page):
     init_db()
 
+    # =========================================================================
+    # پالت رنگی روشن، دلباز و گرم (کرم وانیلی، شیرقهوه، کارامل و لاته روشن)
+    # =========================================================================
+    BG_CREAM = "#F6EFE6"           # پس‌زمینه اصلی: کرم وانیلی بسیار روشن و دلباز
+    CARD_IVORY = "#FFFDF9"         # کارت‌ها: سفیدِ کرمی گرم و درخشان
+    SURFACE_LATTE = "#EFE5D8"      # کادرهای ورودی و سطوح داخلی: کرم لاته روشن
+    CHIP_LATTE = "#E5D3BE"         # پس‌زمینه دکمه‌های کمکی و بج‌ها: بیسکوئیتی روشن
+    BORDER_SAND = "#E4D5C3"        # خطوط دور کارت‌ها: شنی ملایم
+    BORDER_WARM = "#D4C0A8"        # خطوط دور اینپوت‌ها و چیپ‌ها
+    ESPRESSO_DARK = "#4A2E1B"      # متن‌های اصلی: قهوه‌ای برشته گرم (دیگر مشکی/تیره نیست)
+    MOCHA_PRIMARY = "#9C623E"      # رنگ اصلی برند و دکمه‌ها: قهوه‌ای روشن کاراملی / دارچینی
+    CARAMEL_ACCENT = "#C27D48"     # رنگ مکمل: کاراملی طلایی روشن
+    TEXT_MUTED = "#846752"         # متن‌های فرعی: قهوه‌ای شیری ملایم
+    DISABLED_BG = "#E6D8C8"        # پس‌زمینه دکمه غیرفعال: کرم بیسکوئیتی
+    DISABLED_TEXT = "#A68E77"      # متن دکمه غیرفعال
+
+    # رنگ‌های اختصاصی سود (سبز زمردی روشن و شاداب)
+    PROFIT_DARK = "#047857"
+    PROFIT_MAIN = "#059669"
+    PROFIT_LIGHT = "#10B981"
+    PROFIT_BG = "#DCFCE7"
+    PROFIT_SURFACE = "#ECFDF5"
+    PROFIT_BORDER = "#86EFAC"
+
+    # رنگ‌های اختصاصی هزینه‌ها، حذف و بستن (قرمز)
+    COST_RED_DARK = "#B91C1C"
+    COST_RED_MAIN = "#DC2626"
+    COST_RED_BG = "#FEE2E2"
+    COST_RED_SURFACE = "#FEF2F2"
+    COST_RED_BORDER = "#FECACA"
+
     app_title = "حسابداری و صندوق کافه"
     page.title = app_title
     page.rtl = True
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.bgcolor = "#F1F5F9"
+    page.bgcolor = BG_CREAM
     page.window.width = 435
     page.window.height = 820
     page.window.resizable = False
@@ -571,7 +597,10 @@ def main(page: ft.Page):
         "Vazir": "https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/fonts/ttf/Vazirmatn-Regular.ttf",
         "Vazir-Bold": "https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/fonts/ttf/Vazirmatn-Bold.ttf"
     }
-    page.theme = ft.Theme(font_family="Vazir")
+    page.theme = ft.Theme(
+        font_family="Vazir",
+        color_scheme_seed=MOCHA_PRIMARY
+    )
 
     editing_product_id = None
     selected_cashier_category = "همه"
@@ -585,7 +614,6 @@ def main(page: ft.Page):
     selected_j_year = init_jy
     selected_j_month = init_jm
 
-    # --- تابع کمکی برای رفرش قطعی کنترل‌های داخل دیالوگ‌ها و صفحه ---
     def refresh_ui(*ctrls):
         for c in ctrls:
             if c is not None:
@@ -620,31 +648,31 @@ def main(page: ft.Page):
                 pass
         refresh_ui(ctrl)
 
-    # --- اسنک‌بار یکتا و سراسری با بسته شدن خودکار ---
+    # --- اسنک‌بار با رنگ قهوه‌ای کاراملی گرم ---
     snack_timer_ref = [None]
-    app_snack_text = ft.Text("", color=ft.colors.WHITE, font_family="Vazir-Bold", size=12, expand=True)
+    app_snack_text = ft.Text("", color=CARD_IVORY, font_family="Vazir-Bold", size=12, expand=True)
     app_snack = ft.SnackBar(
         content=ft.Row(
             rtl=True,
             spacing=10,
             controls=[
                 ft.Container(
-                    content=ft.Icon(ft.icons.NOTIFICATIONS_ACTIVE_ROUNDED, color="#FBBF24", size=18),
-                    bgcolor=ft.colors.with_opacity(0.15, ft.colors.WHITE),
+                    content=ft.Icon(ft.icons.NOTIFICATIONS_ACTIVE_ROUNDED, color="#FEF3C7", size=18),
+                    bgcolor=ft.colors.with_opacity(0.2, CARD_IVORY),
                     padding=6,
                     border_radius=8,
                 ),
                 app_snack_text,
             ]
         ),
-        bgcolor="#0F172A",
+        bgcolor=MOCHA_PRIMARY,
         behavior=ft.SnackBarBehavior.FLOATING,
         shape=ft.RoundedRectangleBorder(radius=14),
         margin=14,
         duration=1500,
     )
 
-    def show_snackbar(message: str, bg_color="#0F172A"):
+    def show_snackbar(message: str, bg_color=MOCHA_PRIMARY):
         if snack_timer_ref[0] is not None:
             try:
                 snack_timer_ref[0].cancel()
@@ -688,18 +716,18 @@ def main(page: ft.Page):
             pass
         return False
 
-    # --- دیالوگ تایید یکتا و بدون باگ ---
+    # --- دیالوگ تایید یکتا ---
     confirm_action_ref = [None]
-    confirm_icon = ft.Icon(ft.icons.DELETE_SWEEP_ROUNDED, color="#DC2626", size=32)
+    confirm_icon = ft.Icon(ft.icons.DELETE_SWEEP_ROUNDED, color=COST_RED_MAIN, size=32)
     confirm_icon_box = ft.Container(
         content=confirm_icon,
-        bgcolor="#FEF2F2",
+        bgcolor=COST_RED_SURFACE,
         padding=16,
         border_radius=50,
-        border=ft.border.all(1, "#FECACA"),
+        border=ft.border.all(1, COST_RED_BORDER),
     )
-    confirm_title_label = ft.Text("", size=15, font_family="Vazir-Bold", color="#0F172A", text_align=ft.TextAlign.CENTER)
-    confirm_msg_label = ft.Text("", size=12, color="#475569", text_align=ft.TextAlign.CENTER)
+    confirm_title_label = ft.Text("", size=15, font_family="Vazir-Bold", color=ESPRESSO_DARK, text_align=ft.TextAlign.CENTER)
+    confirm_msg_label = ft.Text("", size=12, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER)
 
     def _on_confirm_yes(e):
         close_ctrl(confirm_dlg)
@@ -713,7 +741,7 @@ def main(page: ft.Page):
     confirm_yes_btn = ft.ElevatedButton(
         "بله، حذف شود",
         icon=ft.icons.CHECK_ROUNDED,
-        bgcolor="#DC2626",
+        bgcolor=COST_RED_MAIN,
         color=ft.colors.WHITE,
         elevation=2,
         height=40,
@@ -726,8 +754,8 @@ def main(page: ft.Page):
         modal=True,
         rtl=True,
         shape=ft.RoundedRectangleBorder(radius=22),
-        bgcolor=ft.colors.WHITE,
-        surface_tint_color=ft.colors.WHITE,
+        bgcolor=CARD_IVORY,
+        surface_tint_color=CARD_IVORY,
         title=ft.Column(
             rtl=True,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -743,8 +771,8 @@ def main(page: ft.Page):
                 controls=[
                     ft.ElevatedButton(
                         "انصراف",
-                        bgcolor="#F1F5F9",
-                        color="#334155",
+                        bgcolor=SURFACE_LATTE,
+                        color=ESPRESSO_DARK,
                         elevation=0,
                         height=40,
                         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
@@ -761,18 +789,18 @@ def main(page: ft.Page):
         message_text: str,
         on_confirm_callback,
         confirm_btn_text="بله، حذف شود",
-        confirm_color="#DC2626",
+        confirm_color=COST_RED_MAIN,
         icon_data=None
     ):
         if icon_data is None:
-            icon_data = ft.icons.DELETE_SWEEP_ROUNDED if confirm_color == "#DC2626" else ft.icons.SETTINGS_BACKUP_RESTORE_ROUNDED
-        is_danger = (confirm_color == "#DC2626")
+            icon_data = ft.icons.DELETE_SWEEP_ROUNDED if confirm_color == COST_RED_MAIN else ft.icons.SETTINGS_BACKUP_RESTORE_ROUNDED
+        is_danger = (confirm_color == COST_RED_MAIN)
 
         confirm_action_ref[0] = on_confirm_callback
         confirm_icon.name = icon_data
         confirm_icon.color = confirm_color
-        confirm_icon_box.bgcolor = "#FEF2F2" if is_danger else "#ECFDF5"
-        confirm_icon_box.border = ft.border.all(1, "#FECACA" if is_danger else "#A7F3D0")
+        confirm_icon_box.bgcolor = COST_RED_SURFACE if is_danger else BG_CREAM
+        confirm_icon_box.border = ft.border.all(1, COST_RED_BORDER if is_danger else BORDER_WARM)
         confirm_title_label.value = title_text
         confirm_msg_label.value = message_text
         confirm_yes_btn.text = confirm_btn_text
@@ -794,7 +822,7 @@ def main(page: ft.Page):
         load_dashboard_data()
 
     # =========================================================================
-    # مرکز بکاپ و بازیابی اطلاعات (یکتا، سریع و با حذف خودکار نوتیفیکیشن‌ها)
+    # مرکز بکاپ و بازیابی اطلاعات (تم روشن کرم و کاراملی)
     # =========================================================================
     backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.HIDDEN, height=185)
     status_timer_ref = [None]
@@ -810,21 +838,22 @@ def main(page: ft.Page):
         text_align=ft.TextAlign.RIGHT,
         content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
         border_radius=10,
-        border_color="#CBD5E1",
-        bgcolor="#F8FAFC",
+        border_color=BORDER_WARM,
+        focused_border_color=MOCHA_PRIMARY,
+        bgcolor=SURFACE_LATTE,
     )
 
     status_info_text = ft.Text(
         "",
         size=11,
-        color="#059669",
+        color=MOCHA_PRIMARY,
         font_family="Vazir-Bold",
         text_align=ft.TextAlign.CENTER,
     )
     status_banner = ft.Container(
         visible=False,
-        bgcolor="#ECFDF5",
-        border=ft.border.all(1, "#A7F3D0"),
+        bgcolor=BG_CREAM,
+        border=ft.border.all(1, BORDER_WARM),
         border_radius=10,
         padding=ft.padding.symmetric(horizontal=10, vertical=6),
         alignment=ft.alignment.center,
@@ -834,8 +863,8 @@ def main(page: ft.Page):
     copy_btn = ft.ElevatedButton(
         "کپی کد بکاپ",
         icon=ft.icons.CONTENT_COPY_ROUNDED,
-        bgcolor="#EEF2FF",
-        color="#4F46E5",
+        bgcolor=CHIP_LATTE,
+        color=ESPRESSO_DARK,
         elevation=0,
         expand=1,
         height=38,
@@ -855,13 +884,13 @@ def main(page: ft.Page):
 
         status_info_text.value = msg
         if is_error:
-            status_info_text.color = "#DC2626"
-            status_banner.bgcolor = "#FEF2F2"
-            status_banner.border = ft.border.all(1, "#FECACA")
+            status_info_text.color = COST_RED_MAIN
+            status_banner.bgcolor = COST_RED_SURFACE
+            status_banner.border = ft.border.all(1, COST_RED_BORDER)
         else:
-            status_info_text.color = "#059669"
-            status_banner.bgcolor = "#ECFDF5"
-            status_banner.border = ft.border.all(1, "#A7F3D0")
+            status_info_text.color = MOCHA_PRIMARY
+            status_banner.bgcolor = BG_CREAM
+            status_banner.border = ft.border.all(1, BORDER_WARM)
 
         status_banner.visible = True
         refresh_ui(status_info_text, status_banner, bkp_dlg)
@@ -882,17 +911,17 @@ def main(page: ft.Page):
         if not items:
             backups_list_col.controls.append(
                 ft.Container(
-                    bgcolor="#F8FAFC",
+                    bgcolor=SURFACE_LATTE,
                     border_radius=12,
-                    border=ft.border.all(1, "#E2E8F0"),
+                    border=ft.border.all(1, BORDER_SAND),
                     padding=22,
                     alignment=ft.alignment.center,
                     content=ft.Column(
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         spacing=6,
                         controls=[
-                            ft.Icon(ft.icons.FOLDER_OFF_OUTLINED, size=26, color="#94A3B8"),
-                            ft.Text("هنوز هیچ بکاپی ثبت نشده است.", size=11, color="#94A3B8", font_family="Vazir-Bold"),
+                            ft.Icon(ft.icons.FOLDER_OFF_OUTLINED, size=26, color=TEXT_MUTED),
+                            ft.Text("هنوز هیچ بکاپی ثبت نشده است.", size=11, color=TEXT_MUTED, font_family="Vazir-Bold"),
                         ]
                     )
                 )
@@ -910,7 +939,7 @@ def main(page: ft.Page):
                         if ok:
                             close_ctrl(bkp_dlg)
                             refresh_all_views()
-                            show_snackbar(f"اطلاعات به بکاپ ({dt_str}) بازگردانی شد.", "#059669")
+                            show_snackbar(f"اطلاعات به بکاپ ({dt_str}) بازگردانی شد.", MOCHA_PRIMARY)
                         else:
                             show_dialog_status(msg, is_error=True)
 
@@ -919,7 +948,7 @@ def main(page: ft.Page):
                         f"آیا مطمئن هستید که اطلاعات فعلی برنامه با بکاپ تاریخ «{dt_str}» جایگزین شود؟",
                         do_restore,
                         confirm_btn_text="بله، بازگردانی شود",
-                        confirm_color="#059669"
+                        confirm_color=MOCHA_PRIMARY
                     )
 
                 def ask_delete_bkp(e, path=b_path, name=b_name):
@@ -943,8 +972,8 @@ def main(page: ft.Page):
 
                 backups_list_col.controls.append(
                     ft.Container(
-                        bgcolor="#F8FAFC",
-                        border=ft.border.all(1, "#E2E8F0"),
+                        bgcolor=SURFACE_LATTE,
+                        border=ft.border.all(1, BORDER_SAND),
                         border_radius=12,
                         padding=ft.padding.symmetric(horizontal=10, vertical=8),
                         rtl=True,
@@ -957,8 +986,8 @@ def main(page: ft.Page):
                                     spacing=8,
                                     controls=[
                                         ft.Container(
-                                            content=ft.Icon(ft.icons.STORAGE_ROUNDED, size=18, color="#4F46E5"),
-                                            bgcolor="#EEF2FF",
+                                            content=ft.Icon(ft.icons.STORAGE_ROUNDED, size=18, color=MOCHA_PRIMARY),
+                                            bgcolor=CHIP_LATTE,
                                             padding=7,
                                             border_radius=9,
                                         ),
@@ -966,8 +995,8 @@ def main(page: ft.Page):
                                             spacing=2,
                                             horizontal_alignment=ft.CrossAxisAlignment.START,
                                             controls=[
-                                                ft.Text(b_date, size=11, font_family="Vazir-Bold", color="#0F172A"),
-                                                ft.Text(f"{b_loc} | {item['size_kb']} کیلوبایت", size=9, color="#64748B"),
+                                                ft.Text(b_date, size=11, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                                                ft.Text(f"{b_loc} | {item['size_kb']} کیلوبایت", size=9, color=TEXT_MUTED),
                                             ]
                                         ),
                                     ]
@@ -977,8 +1006,8 @@ def main(page: ft.Page):
                                     spacing=5,
                                     controls=[
                                         ft.Container(
-                                            bgcolor="#DCFCE7",
-                                            border=ft.border.all(1, "#86EFAC"),
+                                            bgcolor=CHIP_LATTE,
+                                            border=ft.border.all(1, BORDER_WARM),
                                             border_radius=8,
                                             padding=ft.padding.symmetric(horizontal=8, vertical=5),
                                             on_click=ask_restore_item,
@@ -987,20 +1016,21 @@ def main(page: ft.Page):
                                                 rtl=True,
                                                 spacing=3,
                                                 controls=[
-                                                    ft.Icon(ft.icons.SETTINGS_BACKUP_RESTORE_ROUNDED, size=14, color="#15803D"),
-                                                    ft.Text("بازگردانی", size=10, font_family="Vazir-Bold", color="#15803D"),
+                                                    ft.Icon(ft.icons.SETTINGS_BACKUP_RESTORE_ROUNDED, size=14, color=ESPRESSO_DARK),
+                                                    ft.Text("بازگردانی", size=10, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                                                 ]
                                             )
                                         ),
                                         ft.Container(
-                                            bgcolor="#FEF2F2",
+                                            bgcolor=COST_RED_BG,
+                                            border=ft.border.all(1, COST_RED_BORDER),
                                             width=30,
                                             height=30,
                                             border_radius=8,
                                             alignment=ft.alignment.center,
                                             on_click=ask_delete_bkp,
                                             tooltip="حذف بکاپ",
-                                            content=ft.Icon(ft.icons.DELETE_OUTLINE_ROUNDED, size=16, color="#DC2626"),
+                                            content=ft.Icon(ft.icons.DELETE_OUTLINE_ROUNDED, size=16, color=COST_RED_MAIN),
                                         ),
                                     ]
                                 ),
@@ -1033,15 +1063,15 @@ def main(page: ft.Page):
 
             copy_btn.text = "کد کپی شد ✔"
             copy_btn.icon = ft.icons.CHECK_CIRCLE_ROUNDED
-            copy_btn.bgcolor = "#D1FAE5"
-            copy_btn.color = "#059669"
+            copy_btn.bgcolor = BORDER_WARM
+            copy_btn.color = ESPRESSO_DARK
             refresh_ui(copy_btn, bkp_dlg)
 
             def _reset_copy_btn():
                 copy_btn.text = "کپی کد بکاپ"
                 copy_btn.icon = ft.icons.CONTENT_COPY_ROUNDED
-                copy_btn.bgcolor = "#EEF2FF"
-                copy_btn.color = "#4F46E5"
+                copy_btn.bgcolor = CHIP_LATTE
+                copy_btn.color = ESPRESSO_DARK
                 refresh_ui(copy_btn, bkp_dlg)
 
             t = threading.Timer(1.5, _reset_copy_btn)
@@ -1065,7 +1095,7 @@ def main(page: ft.Page):
                 backup_code_field.value = ""
                 close_ctrl(bkp_dlg)
                 refresh_all_views()
-                show_snackbar("اطلاعات با موفقیت از کد متنی بازیابی شد!", "#059669")
+                show_snackbar("اطلاعات با موفقیت از کد متنی بازیابی شد!", MOCHA_PRIMARY)
             else:
                 show_dialog_status(msg, is_error=True)
 
@@ -1074,27 +1104,27 @@ def main(page: ft.Page):
             "آیا مطمئن هستید که اطلاعات فعلی با دیتای داخل این کد جایگزین شود؟",
             confirmed_code_restore,
             confirm_btn_text="بله، بازیابی شود",
-            confirm_color="#059669"
+            confirm_color=MOCHA_PRIMARY
         )
 
     bkp_dlg = ft.AlertDialog(
         modal=True,
         rtl=True,
         shape=ft.RoundedRectangleBorder(radius=20),
-        bgcolor=ft.colors.WHITE,
-        surface_tint_color=ft.colors.WHITE,
+        bgcolor=CARD_IVORY,
+        surface_tint_color=CARD_IVORY,
         title=ft.Row(
             rtl=True,
             alignment=ft.MainAxisAlignment.START,
             spacing=8,
             controls=[
                 ft.Container(
-                    content=ft.Icon(ft.icons.CLOUD_SYNC_ROUNDED, color="#4F46E5", size=20),
-                    bgcolor="#EEF2FF",
+                    content=ft.Icon(ft.icons.CLOUD_SYNC_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                    bgcolor=CHIP_LATTE,
                     padding=7,
                     border_radius=10,
                 ),
-                ft.Text("مرکز بکاپ و بازیابی اطلاعات", size=14, font_family="Vazir-Bold", color="#0F172A"),
+                ft.Text("مرکز بکاپ و بازیابی اطلاعات", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
             ]
         ),
         content=ft.Container(
@@ -1112,7 +1142,7 @@ def main(page: ft.Page):
                             ft.ElevatedButton(
                                 "ثبت بکاپ جدید (در برنامه + پوشه دانلود)",
                                 icon=ft.icons.ADD_TASK_ROUNDED,
-                                bgcolor="#059669",
+                                bgcolor=MOCHA_PRIMARY,
                                 color=ft.colors.WHITE,
                                 height=42,
                                 expand=True,
@@ -1126,10 +1156,10 @@ def main(page: ft.Page):
                         ]
                     ),
                     status_banner,
-                    ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color="#334155"),
+                    ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                     backups_list_col,
-                    ft.Container(height=1, bgcolor="#E2E8F0", margin=ft.padding.symmetric(vertical=2)),
-                    ft.Text("پشتیبان‌گیری متنی (مخصوص تلگرام و انتقال):", size=10, font_family="Vazir-Bold", color="#4F46E5"),
+                    ft.Container(height=1, bgcolor=BORDER_SAND, margin=ft.padding.symmetric(vertical=2)),
+                    ft.Text("پشتیبان‌گیری متنی (مخصوص تلگرام و انتقال):", size=10, font_family="Vazir-Bold", color=MOCHA_PRIMARY),
                     ft.Row(rtl=True, controls=[backup_code_field]),
                     ft.Row(
                         rtl=True,
@@ -1139,7 +1169,7 @@ def main(page: ft.Page):
                             ft.ElevatedButton(
                                 "بازگردانی از کد",
                                 icon=ft.icons.DOWNLOAD_DONE_ROUNDED,
-                                bgcolor="#4F46E5",
+                                bgcolor=MOCHA_PRIMARY,
                                 color=ft.colors.WHITE,
                                 elevation=0,
                                 expand=1,
@@ -1163,7 +1193,11 @@ def main(page: ft.Page):
                     rtl=True,
                     alignment=ft.MainAxisAlignment.END,
                     controls=[
-                        ft.TextButton("بستن پنجره", on_click=lambda e: close_ctrl(bkp_dlg))
+                        ft.TextButton(
+                            "بستن پنجره",
+                            style=ft.ButtonStyle(color=ESPRESSO_DARK),
+                            on_click=lambda e: close_ctrl(bkp_dlg)
+                        )
                     ]
                 )
             )
@@ -1181,15 +1215,15 @@ def main(page: ft.Page):
         backup_code_field.value = ""
         copy_btn.text = "کپی کد بکاپ"
         copy_btn.icon = ft.icons.CONTENT_COPY_ROUNDED
-        copy_btn.bgcolor = "#EEF2FF"
-        copy_btn.color = "#4F46E5"
+        copy_btn.bgcolor = CHIP_LATTE
+        copy_btn.color = ESPRESSO_DARK
         render_backups_list()
         open_ctrl(bkp_dlg)
 
-    # --- هدر بالای برنامه ---
+    # --- هدر بالای برنامه (گرادیانت روشن کاپوچینو و کارامل گرم به جای قهوه‌ای سوخته) ---
     today_jy, today_jm, today_jd = gregorian_to_jalali(now_dt.year, now_dt.month, now_dt.day)
     today_badge_str = f"{today_jd} {JALALI_MONTHS[today_jm - 1]} {today_jy}"
-    header_today_sales_text = ft.Text("0 تومان", size=9, font_family="Vazir-Bold", color=ft.colors.GREEN_400)
+    header_today_sales_text = ft.Text("0 تومان", size=9, font_family="Vazir-Bold", color="#FFFDF9")
 
     def refresh_header_today_sales():
         conn = sqlite3.connect(DB_NAME)
@@ -1204,11 +1238,12 @@ def main(page: ft.Page):
         content=ft.Row(
             spacing=4,
             controls=[
-                ft.Icon(ft.icons.BACKUP_ROUNDED, color=ft.colors.WHITE, size=15),
-                ft.Text("بکاپ", size=10, color=ft.colors.WHITE, font_family="Vazir-Bold"),
+                ft.Icon(ft.icons.BACKUP_ROUNDED, color="#FFFDF9", size=15),
+                ft.Text("بکاپ", size=10, color="#FFFDF9", font_family="Vazir-Bold"),
             ]
         ),
-        bgcolor=ft.colors.with_opacity(0.18, ft.colors.WHITE),
+        bgcolor=ft.colors.with_opacity(0.22, "#FFFDF9"),
+        border=ft.border.all(1, ft.colors.with_opacity(0.35, "#FFFDF9")),
         padding=ft.padding.symmetric(horizontal=8, vertical=4),
         border_radius=12,
         on_click=open_backup_manager_dialog,
@@ -1220,9 +1255,9 @@ def main(page: ft.Page):
         gradient=ft.LinearGradient(
             begin=ft.alignment.top_right,
             end=ft.alignment.bottom_left,
-            colors=["#090D16", "#1E1B4B", "#312E81"]
+            colors=["#8A5434", "#A66B46", "#C2845B"]
         ),
-        shadow=ft.BoxShadow(blur_radius=16, color=ft.colors.with_opacity(0.22, ft.colors.BLACK), offset=ft.Offset(0, 4)),
+        shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.18, "#8A5434"), offset=ft.Offset(0, 4)),
         content=ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             controls=[
@@ -1230,17 +1265,17 @@ def main(page: ft.Page):
                     spacing=8,
                     controls=[
                         ft.Container(
-                            content=ft.Icon(ft.icons.COFFEE_ROUNDED, color="#FBBF24", size=22),
-                            bgcolor=ft.colors.with_opacity(0.12, ft.colors.WHITE),
+                            content=ft.Icon(ft.icons.COFFEE_ROUNDED, color="#FFFDF9", size=22),
+                            bgcolor=ft.colors.with_opacity(0.2, "#FFFDF9"),
                             padding=8,
                             border_radius=12,
-                            border=ft.border.all(1, ft.colors.with_opacity(0.2, ft.colors.WHITE)),
+                            border=ft.border.all(1, ft.colors.with_opacity(0.35, "#FFFDF9")),
                         ),
                         ft.Column(
                             spacing=2,
                             controls=[
-                                ft.Text("ویتا حساب", size=14, font_family="Vazir-Bold", color=ft.colors.WHITE),
-                                ft.Text("صندوق فروش و حسابداری هوشمند", size=9, color="#A5B4FC"),
+                                ft.Text("ویتا حساب", size=14, font_family="Vazir-Bold", color="#FFFDF9"),
+                                ft.Text("صندوق فروش و حسابداری کافه", size=9, color="#F6EFE6"),
                             ]
                         )
                     ]
@@ -1253,14 +1288,15 @@ def main(page: ft.Page):
                             spacing=6,
                             controls=[
                                 ft.Container(
-                                    bgcolor=ft.colors.with_opacity(0.15, ft.colors.WHITE),
+                                    bgcolor=ft.colors.with_opacity(0.2, "#FFFDF9"),
+                                    border=ft.border.all(1, ft.colors.with_opacity(0.3, "#FFFDF9")),
                                     padding=ft.padding.symmetric(horizontal=8, vertical=4),
                                     border_radius=20,
                                     content=ft.Row(
                                         spacing=4,
                                         controls=[
-                                            ft.Icon(ft.icons.CALENDAR_TODAY_ROUNDED, color=ft.colors.AMBER_300, size=12),
-                                            ft.Text(today_badge_str, size=10, color=ft.colors.WHITE, font_family="Vazir-Bold"),
+                                            ft.Icon(ft.icons.CALENDAR_TODAY_ROUNDED, color="#FFFDF9", size=12),
+                                            ft.Text(today_badge_str, size=10, color="#FFFDF9", font_family="Vazir-Bold"),
                                         ]
                                     )
                                 ),
@@ -1270,7 +1306,7 @@ def main(page: ft.Page):
                         ft.Row(
                             spacing=4,
                             controls=[
-                                ft.Text("فروش امروز:", size=9, color=ft.colors.INDIGO_100),
+                                ft.Text("فروش امروز:", size=9, color="#F6EFE6"),
                                 header_today_sales_text,
                             ]
                         )
@@ -1310,7 +1346,7 @@ def main(page: ft.Page):
             refresh_category_dropdown()
             render_cashier_category_chips()
             load_cashier_products()
-            show_snackbar(f"دسته‌بندی «{cat_name}» حذف شد.", ft.colors.RED_700)
+            show_snackbar(f"دسته‌بندی «{cat_name}» حذف شد.", COST_RED_MAIN)
 
         show_confirm_dialog(
             "حذف دسته‌بندی",
@@ -1324,27 +1360,28 @@ def main(page: ft.Page):
         for c in all_cats:
             is_sel = (selected_cashier_category == c)
             chip_box = ft.Container(
-                bgcolor="#4F46E5" if is_sel else ft.colors.WHITE,
-                border=ft.border.all(1, "#4F46E5" if is_sel else ft.colors.BLUE_GREY_200),
+                bgcolor=MOCHA_PRIMARY if is_sel else CARD_IVORY,
+                border=ft.border.all(1, MOCHA_PRIMARY if is_sel else BORDER_WARM),
                 border_radius=20,
                 padding=ft.padding.symmetric(horizontal=12, vertical=6),
-                tooltip="نگه داشتن طولانی برای حذف دسته‌بندی" if c != "همه" else None,
+                tooltip="نگه داشتن طولانی (یا کلیک راست) برای حذف" if c != "همه" else None,
                 shadow=ft.BoxShadow(
                     blur_radius=6,
-                    color=ft.colors.with_opacity(0.15 if is_sel else 0.03, "#4F46E5"),
+                    color=ft.colors.with_opacity(0.18 if is_sel else 0.04, MOCHA_PRIMARY),
                     offset=ft.Offset(0, 2)
                 ),
                 content=ft.Text(
                     c,
                     size=11,
                     font_family="Vazir-Bold" if is_sel else "Vazir",
-                    color=ft.colors.WHITE if is_sel else "#475569"
+                    color=CARD_IVORY if is_sel else ESPRESSO_DARK
                 )
             )
+            
             chip_gesture = ft.GestureDetector(
                 mouse_cursor=ft.MouseCursor.CLICK,
                 on_tap=lambda e, cat=c: select_cashier_category(cat),
-                on_long_press_start=(lambda e, cat=c: ask_delete_category(cat)) if c != "همه" else None,
+                on_long_press=(lambda e, cat=c: ask_delete_category(cat)) if c != "همه" else None,
                 on_secondary_tap=(lambda e, cat=c: ask_delete_category(cat)) if c != "همه" else None,
                 content=chip_box
             )
@@ -1364,20 +1401,22 @@ def main(page: ft.Page):
         text_size=11,
         content_padding=ft.padding.symmetric(horizontal=10, vertical=0),
         border_radius=12,
-        border_color=ft.colors.BLUE_GREY_200,
-        bgcolor=ft.colors.WHITE,
+        border_color=BORDER_WARM,
+        focused_border_color=MOCHA_PRIMARY,
+        bgcolor=CARD_IVORY,
         on_change=on_search_change
     )
 
+    # حفظ رنگ‌های اختصاصی و زیبای هر آیکون و بج دسته‌بندی (مثل دانه برف آبی و...)
     def get_category_style(cat: str):
         styles = {
-            "قهوه‌ها": (ft.icons.COFFEE_ROUNDED, "#78350F", "#FEF3C7", "#FDE68A"),
-            "نوشیدنی‌های گرم بر پایۀ قهوه": (ft.icons.LOCAL_CAFE_ROUNDED, "#9A3412", "#FFEDD5", "#FED7AA"),
+            "قهوه‌ها": (ft.icons.COFFEE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5"),
+            "نوشیدنی‌های گرم بر پایۀ قهوه": (ft.icons.LOCAL_CAFE_ROUNDED, "#9A5B13", "#FEF3C7", "#FDE68A"),
             "نوشیدنی‌های سرد بر پایۀ قهوه": (ft.icons.AC_UNIT_ROUNDED, "#0369A1", "#E0F2FE", "#BAE6FD"),
             "شیک‌ها": (ft.icons.BLENDER_ROUNDED, "#6D28D9", "#EDE9FE", "#DDD6FE"),
             "بستنی بار": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
             "بستنی بارها": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
-            "نوشیدنی‌های گرم": (ft.icons.LOCAL_DRINK_ROUNDED, "#B91C1C", "#FEE2E2", "#FECACA"),
+            "نوشیدنی‌های گرم": (ft.icons.LOCAL_DRINK_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA"),
             "چای‌ها": (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0"),
             "کیک و دسر": (ft.icons.COOKIE_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A"),
         }
@@ -1385,25 +1424,25 @@ def main(page: ft.Page):
             return styles[cat]
 
         if any(w in cat for w in ("کیک", "دسر", "شیرینی", "کوکی", "کروسان", "وافل", "پنکیک")):
-            return (ft.icons.BAKERY_DINING_ROUNDED, "#E11D48", "#FFE4E6", "#FECDD3")
+            return (ft.icons.BAKERY_DINING_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A")
         if any(w in cat for w in ("سرد", "آیس", "فراپه", "ماکتیل", "اسموتی", "آب‌میوه")):
             return (ft.icons.LOCAL_BAR_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD")
         if any(w in cat for w in ("چای", "دمنوش", "گیاهی")):
             return (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0")
         if any(w in cat for w in ("قهوه", "اسپرسو", "دمی", "ترک")):
-            return (ft.icons.COFFEE_ROUNDED, "#78350F", "#FEF3C7", "#FDE68A")
+            return (ft.icons.COFFEE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5")
         if any(w in cat for w in ("غذا", "صبحانه", "اسنک", "پنینی", "پاستا", "ساندویچ", "تست")):
             return (ft.icons.RESTAURANT_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA")
         if any(w in cat for w in ("بستنی", "شیک")):
             return (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8")
 
         fallback_palettes = [
-            (ft.icons.LOCAL_CAFE_ROUNDED, "#4338CA", "#EEF2FF", "#C7D2FE"),
+            (ft.icons.LOCAL_CAFE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5"),
             (ft.icons.RESTAURANT_MENU_ROUNDED, "#0F766E", "#CCFBF1", "#99F6E4"),
             (ft.icons.COOKIE_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A"),
-            (ft.icons.LOCAL_DRINK_ROUNDED, "#9333EA", "#F3E8FF", "#E9D5FF"),
+            (ft.icons.LOCAL_DRINK_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA"),
             (ft.icons.BAKERY_DINING_ROUNDED, "#BE123C", "#FFE4E6", "#FECDD3"),
-            (ft.icons.WINE_BAR_ROUNDED, "#1D4ED8", "#DBEAFE", "#BFDBFE"),
+            (ft.icons.WINE_BAR_ROUNDED, "#A16207", "#FEF9C3", "#FEF08A"),
         ]
         idx = sum(ord(ch) for ch in cat) % len(fallback_palettes)
         return fallback_palettes[idx]
@@ -1427,9 +1466,9 @@ def main(page: ft.Page):
         if not filtered_rows:
             cashier_products_col.controls.append(
                 ft.Container(
-                    bgcolor=ft.colors.WHITE,
+                    bgcolor=CARD_IVORY,
                     border_radius=16,
-                    border=ft.border.all(1, "#E2E8F0"),
+                    border=ft.border.all(1, BORDER_SAND),
                     padding=30,
                     alignment=ft.alignment.center,
                     content=ft.Column(
@@ -1437,18 +1476,18 @@ def main(page: ft.Page):
                         spacing=8,
                         controls=[
                             ft.Container(
-                                content=ft.Icon(ft.icons.COFFEE_MAKER_OUTLINED, size=36, color="#94A3B8"),
-                                bgcolor="#F8FAFC",
+                                content=ft.Icon(ft.icons.COFFEE_MAKER_OUTLINED, size=36, color=CARAMEL_ACCENT),
+                                bgcolor=SURFACE_LATTE,
                                 padding=14,
                                 border_radius=50,
                             ),
                             ft.Text(
                                 "محصولی در این بخش یافت نشد!",
-                                color="#475569", size=12, font_family="Vazir-Bold", text_align=ft.TextAlign.CENTER
+                                color=ESPRESSO_DARK, size=12, font_family="Vazir-Bold", text_align=ft.TextAlign.CENTER
                             ),
                             ft.Text(
                                 "از تب «مدیریت منو» آیتم‌های جدید کافه را ثبت کنید.",
-                                color="#94A3B8", size=10, text_align=ft.TextAlign.CENTER
+                                color=TEXT_MUTED, size=10, text_align=ft.TextAlign.CENTER
                             ),
                         ]
                     )
@@ -1474,14 +1513,14 @@ def main(page: ft.Page):
                     conn.close()
 
                     refresh_header_today_sales()
-                    show_snackbar(f"یک عدد «{prod[1]}» در فاکتور ثبت شد.", "#059669")
+                    show_snackbar(f"یک عدد «{prod[1]}» در فاکتور ثبت شد.", MOCHA_PRIMARY)
 
                 card = ft.Container(
-                    bgcolor=ft.colors.WHITE,
+                    bgcolor=CARD_IVORY,
                     border_radius=16,
                     padding=ft.padding.symmetric(horizontal=12, vertical=10),
-                    shadow=ft.BoxShadow(blur_radius=10, color=ft.colors.with_opacity(0.04, ft.colors.BLACK), offset=ft.Offset(0, 3)),
-                    border=ft.border.all(1, "#E2E8F0"),
+                    shadow=ft.BoxShadow(blur_radius=10, color=ft.colors.with_opacity(0.05, MOCHA_PRIMARY), offset=ft.Offset(0, 3)),
+                    border=ft.border.all(1, BORDER_SAND),
                     content=ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         controls=[
@@ -1500,7 +1539,7 @@ def main(page: ft.Page):
                                         spacing=3,
                                         expand=True,
                                         controls=[
-                                            ft.Text(p_name, font_family="Vazir-Bold", size=13, color="#0F172A"),
+                                            ft.Text(p_name, font_family="Vazir-Bold", size=13, color=ESPRESSO_DARK),
                                             ft.Row(
                                                 spacing=6,
                                                 wrap=True,
@@ -1511,19 +1550,20 @@ def main(page: ft.Page):
                                                         padding=ft.padding.symmetric(horizontal=6, vertical=2),
                                                         border_radius=6
                                                     ),
-                                                    ft.Text(f"{format_price(p_sell)} تومان", size=11, color="#059669", font_family="Vazir-Bold"),
+                                                    ft.Text(f"{format_price(p_sell)} تومان", size=11, color=MOCHA_PRIMARY, font_family="Vazir-Bold"),
                                                 ]
                                             )
                                         ]
                                     ),
                                 ]
                             ),
+                            # دکمه ثبت سفارش با گرادیانت روشن کاراملی/دارچینی
                             ft.Container(
-                                gradient=ft.LinearGradient(colors=["#4F46E5", "#6366F1"]),
+                                gradient=ft.LinearGradient(colors=[MOCHA_PRIMARY, CARAMEL_ACCENT]),
                                 width=60, height=44, border_radius=12, alignment=ft.alignment.center,
                                 on_click=direct_checkout_click,
-                                shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.25, "#4F46E5"), offset=ft.Offset(0, 2)),
-                                content=ft.Icon(ft.icons.POINT_OF_SALE_ROUNDED, color=ft.colors.WHITE, size=24),
+                                shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.25, MOCHA_PRIMARY), offset=ft.Offset(0, 2)),
+                                content=ft.Icon(ft.icons.POINT_OF_SALE_ROUNDED, color="#FFFDF9", size=24),
                             )
                         ]
                     )
@@ -1531,27 +1571,27 @@ def main(page: ft.Page):
                 cashier_products_col.controls.append(card)
         page.update()
 
-    # --- دیالوگ یکتای فاکتورهای اخیر ---
+    # --- دیالوگ یکتای فاکتورهای اخیر (لغو سفارش) ---
     orders_list_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, height=340, width=330)
 
     recent_orders_dlg = ft.AlertDialog(
         modal=True,
         rtl=True,
         shape=ft.RoundedRectangleBorder(radius=20),
-        bgcolor=ft.colors.WHITE,
-        surface_tint_color=ft.colors.WHITE,
+        bgcolor=CARD_IVORY,
+        surface_tint_color=CARD_IVORY,
         title=ft.Row(
             rtl=True,
             alignment=ft.MainAxisAlignment.START,
             spacing=8,
             controls=[
                 ft.Container(
-                    content=ft.Icon(ft.icons.HISTORY_ROUNDED, color="#D97706", size=20),
-                    bgcolor="#FEF3C7",
+                    content=ft.Icon(ft.icons.HISTORY_ROUNDED, color=COST_RED_MAIN, size=20),
+                    bgcolor=COST_RED_BG,
                     padding=7,
                     border_radius=10,
                 ),
-                ft.Text("فاکتورهای اخیر (لغو سفارش)", size=14, font_family="Vazir-Bold", color="#0F172A"),
+                ft.Text("فاکتورهای اخیر (لغو سفارش)", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
             ]
         ),
         content=ft.Container(
@@ -1565,7 +1605,11 @@ def main(page: ft.Page):
                     rtl=True,
                     alignment=ft.MainAxisAlignment.END,
                     controls=[
-                        ft.TextButton("بستن پنجره", on_click=lambda e: close_dialog(recent_orders_dlg))
+                        ft.TextButton(
+                            "بستن پنجره",
+                            style=ft.ButtonStyle(color=ESPRESSO_DARK),
+                            on_click=lambda e: close_dialog(recent_orders_dlg)
+                        )
                     ]
                 )
             )
@@ -1586,7 +1630,7 @@ def main(page: ft.Page):
         if not rows:
             orders_list_col.controls.append(
                 ft.Container(
-                    content=ft.Text("هیچ سفارشی ثبت نشده است.", color="#94A3B8", size=12),
+                    content=ft.Text("هیچ سفارشی ثبت نشده است.", color=TEXT_MUTED, size=12),
                     alignment=ft.alignment.center,
                     padding=30
                 )
@@ -1612,7 +1656,7 @@ def main(page: ft.Page):
                         refresh_header_today_sales()
                         load_recent_orders()
                         load_dashboard_data()
-                        show_snackbar(f"فاکتور شماره {d_num} ({prod_name}) لغو و حذف شد.", "#DC2626")
+                        show_snackbar(f"فاکتور شماره {d_num} ({prod_name}) لغو و حذف شد.", COST_RED_MAIN)
 
                     show_confirm_dialog(
                         "لغو و حذف فاکتور",
@@ -1622,8 +1666,8 @@ def main(page: ft.Page):
 
                 orders_list_col.controls.append(
                     ft.Container(
-                        bgcolor="#F8FAFC",
-                        border=ft.border.all(1, "#E2E8F0"),
+                        bgcolor=SURFACE_LATTE,
+                        border=ft.border.all(1, BORDER_SAND),
                         border_radius=12,
                         padding=10,
                         content=ft.Row(
@@ -1631,8 +1675,8 @@ def main(page: ft.Page):
                             rtl=True,
                             controls=[
                                 ft.Container(
-                                    content=ft.Text(f"{display_num}", size=11, font_family="Vazir-Bold", color="#4F46E5"),
-                                    bgcolor="#EEF2FF",
+                                    content=ft.Text(f"{display_num}", size=11, font_family="Vazir-Bold", color=MOCHA_PRIMARY),
+                                    bgcolor=CHIP_LATTE,
                                     padding=ft.padding.symmetric(horizontal=8, vertical=5),
                                     border_radius=8,
                                 ),
@@ -1644,22 +1688,23 @@ def main(page: ft.Page):
                                             spacing=2,
                                             horizontal_alignment=ft.CrossAxisAlignment.START,
                                             controls=[
-                                                ft.Text(o_name, size=12, font_family="Vazir-Bold", color="#0F172A"),
+                                                ft.Text(o_name, size=12, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                                                 ft.Row(
                                                     rtl=True,
                                                     spacing=4,
                                                     controls=[
-                                                        ft.Text(f"{format_price(o_price)}", size=10, font_family="Vazir-Bold", color="#64748B"),
-                                                        ft.Text("تومان", size=10, color="#64748B"),
-                                                        ft.Text("|", size=9, color="#CBD5E1"),
-                                                        ft.Text(jalali_dt, size=10, color="#64748B")
+                                                        ft.Text(f"{format_price(o_price)}", size=10, font_family="Vazir-Bold", color=TEXT_MUTED),
+                                                        ft.Text("تومان", size=10, color=TEXT_MUTED),
+                                                        ft.Text("|", size=9, color=BORDER_WARM),
+                                                        ft.Text(jalali_dt, size=10, color=TEXT_MUTED)
                                                     ]
                                                 )
                                             ]
                                         ),
                                         ft.Container(
-                                            content=ft.Icon(ft.icons.DELETE_FOREVER_ROUNDED, color=ft.colors.RED_600, size=18),
-                                            bgcolor=ft.colors.RED_50,
+                                            content=ft.Icon(ft.icons.DELETE_FOREVER_ROUNDED, color=COST_RED_MAIN, size=18),
+                                            bgcolor=COST_RED_BG,
+                                            border=ft.border.all(1, COST_RED_BORDER),
                                             width=34, height=34, border_radius=8, alignment=ft.alignment.center,
                                             on_click=ask_delete_order,
                                             tooltip="لغو این سفارش"
@@ -1690,8 +1735,8 @@ def main(page: ft.Page):
                         ft.ElevatedButton(
                             "لغو فاکتور",
                             icon=ft.icons.RESTORE_FROM_TRASH_ROUNDED,
-                            bgcolor=ft.colors.RED_50,
-                            color=ft.colors.RED_700,
+                            bgcolor=COST_RED_BG,
+                            color=COST_RED_DARK,
                             elevation=0,
                             height=38,
                             style=ft.ButtonStyle(
@@ -1712,7 +1757,7 @@ def main(page: ft.Page):
     )
 
     # =========================================================================
-    # 2. تب مدیریت منو (با نمایش زنده حروف فارسی، سود خالص و دسته‌بندی پویا)
+    # 2. تب مدیریت منو (تم کرم و کاراملی روشن + هزینه قرمز + سود سبز)
     # =========================================================================
     def move_product(prod_id, current_sort, direction):
         conn = sqlite3.connect(DB_NAME)
@@ -1740,8 +1785,9 @@ def main(page: ft.Page):
         text_size=12,
         content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
         border_radius=10,
-        border_color="#CBD5E1",
-        bgcolor="#F8FAFC",
+        border_color=BORDER_WARM,
+        focused_border_color=MOCHA_PRIMARY,
+        bgcolor=SURFACE_LATTE,
         expand=1
     )
 
@@ -1750,8 +1796,9 @@ def main(page: ft.Page):
         text_size=12,
         height=44,
         border_radius=10,
-        border_color="#CBD5E1",
-        bgcolor="#F8FAFC",
+        border_color=BORDER_WARM,
+        focused_border_color=MOCHA_PRIMARY,
+        bgcolor=SURFACE_LATTE,
         autofocus=True,
         rtl=True,
         text_align=ft.TextAlign.RIGHT,
@@ -1760,7 +1807,7 @@ def main(page: ft.Page):
     def submit_new_category(e):
         c_name = (new_cat_input.value or "").strip()
         if not c_name or c_name == ADD_CAT_OPTION or c_name == "همه":
-            show_snackbar("لطفاً یک نام معتبر برای دسته‌بندی وارد کنید!", ft.colors.RED_700)
+            show_snackbar("لطفاً یک نام معتبر برای دسته‌بندی وارد کنید!", COST_RED_MAIN)
             return
         try:
             conn = sqlite3.connect(DB_NAME)
@@ -1772,9 +1819,9 @@ def main(page: ft.Page):
             close_ctrl(cat_dialog)
             refresh_category_dropdown(selected=c_name)
             render_cashier_category_chips()
-            show_snackbar(f"دسته‌بندی «{c_name}» با موفقیت اضافه شد.", "#059669")
+            show_snackbar(f"دسته‌بندی «{c_name}» با موفقیت اضافه شد.", MOCHA_PRIMARY)
         except sqlite3.IntegrityError:
-            show_snackbar("این دسته‌بندی از قبل در لیست وجود دارد!", ft.colors.RED_700)
+            show_snackbar("این دسته‌بندی از قبل در لیست وجود دارد!", COST_RED_MAIN)
 
     new_cat_input.on_submit = submit_new_category
 
@@ -1782,20 +1829,20 @@ def main(page: ft.Page):
         modal=True,
         rtl=True,
         shape=ft.RoundedRectangleBorder(radius=18),
-        bgcolor=ft.colors.WHITE,
-        surface_tint_color=ft.colors.WHITE,
+        bgcolor=CARD_IVORY,
+        surface_tint_color=CARD_IVORY,
         title=ft.Row(
             rtl=True,
             alignment=ft.MainAxisAlignment.START,
             spacing=8,
             controls=[
                 ft.Container(
-                    content=ft.Icon(ft.icons.CREATE_NEW_FOLDER_ROUNDED, color="#059669", size=20),
-                    bgcolor="#D1FAE5",
+                    content=ft.Icon(ft.icons.CREATE_NEW_FOLDER_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                    bgcolor=CHIP_LATTE,
                     padding=7,
                     border_radius=10,
                 ),
-                ft.Text("افزودن دسته‌بندی جدید", size=14, font_family="Vazir-Bold", color="#0F172A"),
+                ft.Text("افزودن دسته‌بندی جدید", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
             ]
         ),
         content=ft.Container(
@@ -1813,11 +1860,15 @@ def main(page: ft.Page):
                     alignment=ft.MainAxisAlignment.END,
                     spacing=8,
                     controls=[
-                        ft.TextButton("انصراف", on_click=lambda e: close_ctrl(cat_dialog)),
+                        ft.TextButton(
+                            "انصراف",
+                            style=ft.ButtonStyle(color=ESPRESSO_DARK),
+                            on_click=lambda e: close_ctrl(cat_dialog)
+                        ),
                         ft.ElevatedButton(
                             "افزودن",
                             icon=ft.icons.ADD_ROUNDED,
-                            bgcolor="#059669",
+                            bgcolor=MOCHA_PRIMARY,
                             color=ft.colors.WHITE,
                             height=38,
                             rtl=True,
@@ -1845,8 +1896,11 @@ def main(page: ft.Page):
         text_size=12,
         content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
         border_radius=10,
-        border_color="#CBD5E1",
-        bgcolor="#F8FAFC",
+        border_color=BORDER_WARM,
+        focused_border_color=MOCHA_PRIMARY,
+        bgcolor=SURFACE_LATTE,
+        filled=True,
+        fill_color=SURFACE_LATTE,
         expand=1,
         on_change=on_category_dropdown_change,
         on_select=on_category_dropdown_change,
@@ -1864,22 +1918,32 @@ def main(page: ft.Page):
             category_dropdown.value = cats[0] if cats else None
         page.update()
 
-    cost_words_text = ft.Text("صفر تومان", size=10, color="#B45309", font_family="Vazir-Bold")
-    sell_words_text = ft.Text("صفر تومان", size=10, color="#047857", font_family="Vazir-Bold")
-    live_profit_preview_text = ft.Text("لطفاً قیمت پایه و فروش را وارد کنید", size=11, color="#4338CA", font_family="Vazir-Bold")
+    # قیمت پایه به رنگ قرمز (هزینه) و قیمت فروش به رنگ قهوه‌ای کاراملی
+    cost_words_text = ft.Text("صفر تومان", size=10, color=COST_RED_MAIN, font_family="Vazir-Bold")
+    sell_words_text = ft.Text("صفر تومان", size=10, color=MOCHA_PRIMARY, font_family="Vazir-Bold")
+    live_profit_preview_text = ft.Text("لطفاً قیمت پایه و فروش را وارد کنید", size=11, color=MOCHA_PRIMARY, font_family="Vazir-Bold")
+    live_profit_preview_box = ft.Container(
+        bgcolor=SURFACE_LATTE,
+        border=ft.border.all(1, BORDER_SAND),
+        border_radius=10,
+        padding=ft.padding.symmetric(horizontal=10, vertical=6),
+        alignment=ft.alignment.center,
+        content=live_profit_preview_text
+    )
 
     submit_product_btn = ft.ElevatedButton(
         "ذخیره در منوی کافه",
         icon=ft.icons.CHECK_CIRCLE_ROUNDED,
-        bgcolor="#94A3B8",
-        color=ft.colors.WHITE,
+        bgcolor=DISABLED_BG,
+        color=DISABLED_TEXT,
         expand=True,
         height=42,
-        disabled=True,
+        disabled=False,
         style=ft.ButtonStyle(
             shape=ft.RoundedRectangleBorder(radius=10),
             text_style=ft.TextStyle(size=12, font_family="Vazir-Bold")
-        )
+        ),
+        on_click=lambda e: None
     )
 
     def update_live_profit_preview():
@@ -1891,20 +1955,29 @@ def main(page: ft.Page):
 
         if s_raw == "" or c_raw == "":
             live_profit_preview_text.value = "لطفاً قیمت پایه و فروش را وارد کنید"
-            live_profit_preview_text.color = "#4338CA"
-            submit_product_btn.disabled = True
-            submit_product_btn.bgcolor = "#94A3B8"
+            live_profit_preview_text.color = MOCHA_PRIMARY
+            live_profit_preview_box.bgcolor = SURFACE_LATTE
+            live_profit_preview_box.border = ft.border.all(1, BORDER_SAND)
+            submit_product_btn.bgcolor = DISABLED_BG
+            submit_product_btn.color = DISABLED_TEXT
+            submit_product_btn.on_click = lambda e: None
         elif diff > 0:
             margin_pct = int((diff / s_num) * 100) if s_num > 0 else 0
             live_profit_preview_text.value = f"سود خالص هر فروش: {format_price(diff)} تومان ({margin_pct}٪ سود)"
-            live_profit_preview_text.color = "#047857"
-            submit_product_btn.disabled = False
-            submit_product_btn.bgcolor = "#D97706" if editing_product_id else "#4F46E5"
+            live_profit_preview_text.color = PROFIT_DARK
+            live_profit_preview_box.bgcolor = PROFIT_SURFACE
+            live_profit_preview_box.border = ft.border.all(1, PROFIT_BORDER)
+            submit_product_btn.bgcolor = CARAMEL_ACCENT if editing_product_id else MOCHA_PRIMARY
+            submit_product_btn.color = ft.colors.WHITE
+            submit_product_btn.on_click = save_or_update_product
         else:
             live_profit_preview_text.value = f"زیان یا بدون سود: {format_price(abs(diff))} تومان (غیرقابل ثبت!)"
-            live_profit_preview_text.color = "#DC2626"
-            submit_product_btn.disabled = True
-            submit_product_btn.bgcolor = "#94A3B8"
+            live_profit_preview_text.color = COST_RED_MAIN
+            live_profit_preview_box.bgcolor = COST_RED_SURFACE
+            live_profit_preview_box.border = ft.border.all(1, COST_RED_BORDER)
+            submit_product_btn.bgcolor = DISABLED_BG
+            submit_product_btn.color = DISABLED_TEXT
+            submit_product_btn.on_click = lambda e: None
 
     def on_cost_price_change(e):
         digits = "".join([c for c in (e.control.value or "") if c.isdigit()])
@@ -1931,16 +2004,18 @@ def main(page: ft.Page):
         page.update()
 
     cost_input = ft.TextField(
-        label="قیمت پایه",
+        label="قیمت پایه (هزینه)",
         height=44,
         text_size=12,
         keyboard_type=ft.KeyboardType.NUMBER,
         content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
         border_radius=10,
-        border_color="#CBD5E1",
-        bgcolor="#F8FAFC",
+        border_color=BORDER_WARM,
+        focused_border_color=COST_RED_MAIN,
+        bgcolor=SURFACE_LATTE,
         on_change=on_cost_price_change
     )
+
     sell_input = ft.TextField(
         label="قیمت فروش",
         height=44,
@@ -1948,28 +2023,30 @@ def main(page: ft.Page):
         keyboard_type=ft.KeyboardType.NUMBER,
         content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
         border_radius=10,
-        border_color="#CBD5E1",
-        bgcolor="#F8FAFC",
+        border_color=BORDER_WARM,
+        focused_border_color=MOCHA_PRIMARY,
+        bgcolor=SURFACE_LATTE,
         on_change=on_sell_price_change
     )
 
     cancel_edit_btn = ft.Container(
-        content=ft.Icon(ft.icons.CLOSE_ROUNDED, color=ft.colors.RED_600, size=20),
-        bgcolor=ft.colors.RED_50,
+        content=ft.Icon(ft.icons.CLOSE_ROUNDED, color=COST_RED_MAIN, size=20),
+        bgcolor=COST_RED_BG,
+        border=ft.border.all(1, COST_RED_BORDER),
         width=42, height=42, border_radius=10, alignment=ft.alignment.center,
         tooltip="بستن فرم",
     )
 
     menu_products_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
-    menu_count_badge = ft.Text("0 محصول", size=11, font_family="Vazir-Bold", color="#4F46E5")
+    menu_count_badge = ft.Text("0 محصول", size=11, font_family="Vazir-Bold", color=MOCHA_PRIMARY)
 
     add_form_container = ft.Container(
         visible=False,
-        bgcolor=ft.colors.WHITE,
+        bgcolor=CARD_IVORY,
         border_radius=16,
         padding=14,
-        border=ft.border.all(1.5, "#C7D2FE"),
-        shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.07, "#1E1B4B"), offset=ft.Offset(0, 4)),
+        border=ft.border.all(1.5, BORDER_WARM),
+        shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.08, MOCHA_PRIMARY), offset=ft.Offset(0, 4)),
         content=ft.Column(
             spacing=10,
             controls=[
@@ -1984,14 +2061,14 @@ def main(page: ft.Page):
                             controls=[
                                 cost_input,
                                 ft.Container(
-                                    bgcolor="#FFFBEB",
-                                    border=ft.border.all(1, "#FDE68A"),
+                                    bgcolor=COST_RED_SURFACE,
+                                    border=ft.border.all(1, COST_RED_BORDER),
                                     border_radius=8,
                                     padding=ft.padding.symmetric(horizontal=8, vertical=4),
                                     content=ft.Row(
                                         spacing=4,
                                         controls=[
-                                            ft.Icon(ft.icons.SUBDIRECTORY_ARROW_LEFT_ROUNDED, size=12, color="#D97706"),
+                                            ft.Icon(ft.icons.SUBDIRECTORY_ARROW_LEFT_ROUNDED, size=12, color=COST_RED_MAIN),
                                             ft.Container(content=cost_words_text, expand=True),
                                         ]
                                     )
@@ -2004,14 +2081,14 @@ def main(page: ft.Page):
                             controls=[
                                 sell_input,
                                 ft.Container(
-                                    bgcolor="#ECFDF5",
-                                    border=ft.border.all(1, "#A7F3D0"),
+                                    bgcolor=BG_CREAM,
+                                    border=ft.border.all(1, BORDER_SAND),
                                     border_radius=8,
                                     padding=ft.padding.symmetric(horizontal=8, vertical=4),
                                     content=ft.Row(
                                         spacing=4,
                                         controls=[
-                                            ft.Icon(ft.icons.SUBDIRECTORY_ARROW_LEFT_ROUNDED, size=12, color="#059669"),
+                                            ft.Icon(ft.icons.SUBDIRECTORY_ARROW_LEFT_ROUNDED, size=12, color=MOCHA_PRIMARY),
                                             ft.Container(content=sell_words_text, expand=True),
                                         ]
                                     )
@@ -2020,14 +2097,7 @@ def main(page: ft.Page):
                         )
                     ]
                 ),
-                ft.Container(
-                    bgcolor="#F8FAFC",
-                    border=ft.border.all(1, "#E2E8F0"),
-                    border_radius=10,
-                    padding=ft.padding.symmetric(horizontal=10, vertical=6),
-                    alignment=ft.alignment.center,
-                    content=live_profit_preview_text
-                ),
+                live_profit_preview_box,
                 ft.Row(spacing=8, controls=[submit_product_btn, cancel_edit_btn])
             ]
         )
@@ -2036,7 +2106,7 @@ def main(page: ft.Page):
     show_add_form_btn = ft.ElevatedButton(
         "افزودن آیتم",
         icon=ft.icons.ADD_CIRCLE_OUTLINE_ROUNDED,
-        bgcolor="#4F46E5",
+        bgcolor=MOCHA_PRIMARY,
         color=ft.colors.WHITE,
         elevation=2,
         height=36,
@@ -2065,11 +2135,14 @@ def main(page: ft.Page):
         cost_words_text.value = "صفر تومان"
         sell_words_text.value = "صفر تومان"
         live_profit_preview_text.value = "لطفاً قیمت پایه و فروش را وارد کنید"
-        live_profit_preview_text.color = "#4338CA"
+        live_profit_preview_text.color = MOCHA_PRIMARY
+        live_profit_preview_box.bgcolor = SURFACE_LATTE
+        live_profit_preview_box.border = ft.border.all(1, BORDER_SAND)
         submit_product_btn.text = "ذخیره در منوی کافه"
         submit_product_btn.icon = ft.icons.CHECK_CIRCLE_ROUNDED
-        submit_product_btn.bgcolor = "#94A3B8"
-        submit_product_btn.disabled = True
+        submit_product_btn.bgcolor = DISABLED_BG
+        submit_product_btn.color = DISABLED_TEXT
+        submit_product_btn.on_click = lambda e: None
         toggle_form(False)
 
     cancel_edit_btn.on_click = lambda e: reset_menu_form()
@@ -2082,18 +2155,18 @@ def main(page: ft.Page):
         sell_str = sell_input.value.strip().replace(",", "")
 
         if not name or not cost_str or not sell_str or not cat or cat == ADD_CAT_OPTION:
-            show_snackbar("لطفاً نام محصول، دسته‌بندی و هر دو قیمت را وارد کنید!", ft.colors.RED_700)
+            show_snackbar("لطفاً نام محصول، دسته‌بندی و هر دو قیمت را وارد کنید!", COST_RED_MAIN)
             return
 
         try:
             cost_val = float(cost_str)
             sell_val = float(sell_str)
         except ValueError:
-            show_snackbar("قیمت خرید و فروش باید عدد باشند!", ft.colors.RED_700)
+            show_snackbar("قیمت خرید و فروش باید عدد باشند!", COST_RED_MAIN)
             return
 
         if sell_val <= cost_val:
-            show_snackbar("خطا: قیمت فروش باید حتماً بیشتر از قیمت پایه باشد!", ft.colors.RED_700)
+            show_snackbar("خطا: قیمت فروش باید حتماً بیشتر از قیمت پایه باشد!", COST_RED_MAIN)
             return
 
         conn = sqlite3.connect(DB_NAME)
@@ -2108,7 +2181,7 @@ def main(page: ft.Page):
                 INSERT INTO products (name, category, cost_price, sell_price, sort_index)
                 VALUES (?, ?, ?, ?, ?)
             """, (name, cat, cost_val, sell_val, new_sort))
-            show_snackbar(f"محصول «{name}» با موفقیت به منو اضافه شد.", "#059669")
+            show_snackbar(f"محصول «{name}» با موفقیت به منو اضافه شد.", MOCHA_PRIMARY)
         else:
             cursor.execute("SELECT name FROM products WHERE id = ?", (editing_product_id,))
             old_name_row = cursor.fetchone()
@@ -2128,15 +2201,13 @@ def main(page: ft.Page):
                         WHERE product_name = ?
                     """, (name, old_name))
 
-            show_snackbar(f"اطلاعات «{name}» بروزرسانی شد.", "#D97706")
+            show_snackbar(f"اطلاعات «{name}» بروزرسانی شد.", CARAMEL_ACCENT)
 
         conn.commit()
         conn.close()
         reset_menu_form()
         load_menu_products()
         load_cashier_products()
-
-    submit_product_btn.on_click = save_or_update_product
 
     def load_menu_products():
         menu_products_col.controls.clear()
@@ -2151,10 +2222,10 @@ def main(page: ft.Page):
         if not rows:
             menu_products_col.controls.append(
                 ft.Container(
-                    bgcolor=ft.colors.WHITE,
+                    bgcolor=CARD_IVORY,
                     border_radius=16,
-                    border=ft.border.all(1, "#E2E8F0"),
-                    content=ft.Text("هنوز محصولی در منو ثبت نشده است.", color="#94A3B8", size=12),
+                    border=ft.border.all(1, BORDER_SAND),
+                    content=ft.Text("هنوز محصولی در منو ثبت نشده است.", color=TEXT_MUTED, size=12),
                     alignment=ft.alignment.center,
                     padding=30
                 )
@@ -2196,7 +2267,7 @@ def main(page: ft.Page):
                         conn_del.close()
                         load_menu_products()
                         load_cashier_products()
-                        show_snackbar(f"محصول «{prod_name}» از منو حذف شد.", ft.colors.RED_700)
+                        show_snackbar(f"محصول «{prod_name}» از منو حذف شد.", COST_RED_MAIN)
 
                     show_confirm_dialog(
                         "حذف محصول از منو",
@@ -2205,11 +2276,11 @@ def main(page: ft.Page):
                     )
 
                 card = ft.Container(
-                    bgcolor=ft.colors.WHITE,
+                    bgcolor=CARD_IVORY,
                     border_radius=14,
                     padding=12,
-                    border=ft.border.all(1, "#E2E8F0"),
-                    shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.03, ft.colors.BLACK), offset=ft.Offset(0, 2)),
+                    border=ft.border.all(1, BORDER_SAND),
+                    shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.04, MOCHA_PRIMARY), offset=ft.Offset(0, 2)),
                     content=ft.Column(
                         spacing=6,
                         controls=[
@@ -2229,7 +2300,7 @@ def main(page: ft.Page):
                                             ft.Column(
                                                 spacing=2,
                                                 controls=[
-                                                    ft.Text(p_name, font_family="Vazir-Bold", size=13, color=ft.colors.BLUE_GREY_900),
+                                                    ft.Text(p_name, font_family="Vazir-Bold", size=13, color=ESPRESSO_DARK),
                                                     ft.Container(
                                                         content=ft.Text(p_cat, size=9, color=cat_color, font_family="Vazir-Bold"),
                                                         bgcolor=cat_bg,
@@ -2244,27 +2315,29 @@ def main(page: ft.Page):
                                         spacing=4,
                                         controls=[
                                             ft.Container(
-                                                content=ft.Icon(ft.icons.KEYBOARD_ARROW_UP_ROUNDED, color="#059669", size=18),
-                                                bgcolor="#D1FAE5", width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                                                content=ft.Icon(ft.icons.KEYBOARD_ARROW_UP_ROUNDED, color=MOCHA_PRIMARY, size=18),
+                                                bgcolor=SURFACE_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
                                                 on_click=lambda e, pid=p_id, s=p_sort: move_product(pid, s, "up"),
                                                 tooltip="یک پله به بالا"
                                             ),
                                             ft.Container(
-                                                content=ft.Icon(ft.icons.KEYBOARD_ARROW_DOWN_ROUNDED, color="#059669", size=18),
-                                                bgcolor="#D1FAE5", width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                                                content=ft.Icon(ft.icons.KEYBOARD_ARROW_DOWN_ROUNDED, color=MOCHA_PRIMARY, size=18),
+                                                bgcolor=SURFACE_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
                                                 on_click=lambda e, pid=p_id, s=p_sort: move_product(pid, s, "down"),
                                                 tooltip="یک پله به پایین"
                                             ),
                                             ft.Container(
-                                                content=ft.Icon(ft.icons.EDIT_NOTE_ROUNDED, color=ft.colors.BLUE_700, size=18),
-                                                bgcolor=ft.colors.BLUE_50,
+                                                content=ft.Icon(ft.icons.EDIT_NOTE_ROUNDED, color=MOCHA_PRIMARY, size=18),
+                                                bgcolor=BG_CREAM,
+                                                border=ft.border.all(1, BORDER_WARM),
                                                 width=34, height=34, border_radius=8, alignment=ft.alignment.center,
                                                 on_click=edit_click,
                                                 tooltip="ویرایش"
                                             ),
                                             ft.Container(
-                                                content=ft.Icon(ft.icons.DELETE_OUTLINE_ROUNDED, color=ft.colors.RED_600, size=18),
-                                                bgcolor=ft.colors.RED_50,
+                                                content=ft.Icon(ft.icons.DELETE_OUTLINE_ROUNDED, color=COST_RED_MAIN, size=18),
+                                                bgcolor=COST_RED_BG,
+                                                border=ft.border.all(1, COST_RED_BORDER),
                                                 width=34, height=34, border_radius=8, alignment=ft.alignment.center,
                                                 on_click=delete_click,
                                                 tooltip="حذف"
@@ -2274,16 +2347,23 @@ def main(page: ft.Page):
                                 ]
                             ),
                             ft.Container(
-                                bgcolor="#F8FAFC",
+                                bgcolor=BG_CREAM,
                                 border_radius=10,
                                 padding=ft.padding.symmetric(horizontal=10, vertical=6),
                                 content=ft.Row(
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                     controls=[
-                                        ft.Text(f"پایه: {format_price(p_cost)} ت", size=10, color="#64748B"),
-                                        ft.Text(f"فروش: {format_price(p_sell)} ت", size=10, color="#0F172A", font_family="Vazir-Bold"),
                                         ft.Container(
-                                            bgcolor="#DCFCE7",
+                                            bgcolor=COST_RED_SURFACE,
+                                            border=ft.border.all(1, COST_RED_BORDER),
+                                            padding=ft.padding.symmetric(horizontal=7, vertical=2),
+                                            border_radius=6,
+                                            content=ft.Text(f"پایه: {format_price(p_cost)} ت", size=10, color=COST_RED_MAIN, font_family="Vazir-Bold")
+                                        ),
+                                        ft.Text(f"فروش: {format_price(p_sell)} ت", size=10, color=ESPRESSO_DARK, font_family="Vazir-Bold"),
+                                        ft.Container(
+                                            bgcolor=PROFIT_BG,
+                                            border=ft.border.all(1, PROFIT_BORDER),
                                             padding=ft.padding.symmetric(horizontal=7, vertical=2),
                                             border_radius=6,
                                             content=ft.Text(f"سود: {format_price(unit_prof)} ت ({margin_pct}٪)", size=10, color="#15803D", font_family="Vazir-Bold")
@@ -2311,14 +2391,14 @@ def main(page: ft.Page):
                             spacing=6,
                             controls=[
                                 ft.Container(
-                                    content=ft.Icon(ft.icons.MENU_BOOK_ROUNDED, color="#4338CA", size=18),
-                                    bgcolor="#EEF2FF",
+                                    content=ft.Icon(ft.icons.MENU_BOOK_ROUNDED, color=MOCHA_PRIMARY, size=18),
+                                    bgcolor=CHIP_LATTE,
                                     padding=7,
                                     border_radius=10,
                                 ),
-                                ft.Text("مدیریت منو", size=14, font_family="Vazir-Bold", color="#0F172A"),
+                                ft.Text("مدیریت منو", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                                 ft.Container(
-                                    bgcolor="#EEF2FF",
+                                    bgcolor=CHIP_LATTE,
                                     padding=ft.padding.symmetric(horizontal=7, vertical=3),
                                     border_radius=8,
                                     content=menu_count_badge
@@ -2329,28 +2409,28 @@ def main(page: ft.Page):
                     ]
                 ),
                 add_form_container,
-                ft.Text("لیست محصولات موجود:", size=12, font_family="Vazir-Bold", color=ft.colors.BLUE_GREY_800),
+                ft.Text("لیست محصولات موجود:", size=12, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                 menu_products_col
             ]
         )
     )
 
     # =========================================================================
-    # 3. تب داشبورد و گزارش مالی پیشرفته
+    # 3. تب داشبورد و گزارش مالی پیشرفته (سود سبز، هزینه قرمز، محیط روشن کرم/کاراملی)
     # =========================================================================
-    total_revenue_text = ft.Text("0", size=14, font_family="Vazir-Bold", color="#1D4ED8")
-    total_cost_text = ft.Text("0", size=14, font_family="Vazir-Bold", color="#B45309")
-    net_profit_text = ft.Text("0 تومان", size=20, font_family="Vazir-Bold", color=ft.colors.WHITE)
-    net_profit_words_text = ft.Text("صفر تومان", size=10, color="#A7F3D0")
-    profit_margin_badge_text = ft.Text("حاشیه سود: 0٪", size=10, font_family="Vazir-Bold", color="#064E3B")
-    period_summary_badge = ft.Text("0 فروش", size=10, font_family="Vazir-Bold", color=ft.colors.WHITE)
+    total_revenue_text = ft.Text("0", size=14, font_family="Vazir-Bold", color=MOCHA_PRIMARY)
+    total_cost_text = ft.Text("0", size=14, font_family="Vazir-Bold", color=COST_RED_MAIN)
+    net_profit_text = ft.Text("0 تومان", size=20, font_family="Vazir-Bold", color="#FFFDF9")
+    net_profit_words_text = ft.Text("صفر تومان", size=10, color="#ECFDF5")
+    profit_margin_badge_text = ft.Text("حاشیه سود: 0٪", size=10, font_family="Vazir-Bold", color=PROFIT_DARK)
+    period_summary_badge = ft.Text("0 فروش", size=10, font_family="Vazir-Bold", color="#FFFDF9")
 
     report_items_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
     mode_selector_row = ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER)
     date_navigator_container = ft.Container()
 
     cal_state = {"jy": today_jy, "jm": today_jm, "jd": today_jd}
-    cal_header_text = ft.Text("", size=13, font_family="Vazir-Bold", color="#1E1B4B")
+    cal_header_text = ft.Text("", size=13, font_family="Vazir-Bold", color=ESPRESSO_DARK)
     days_grid_col = ft.Column(spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
     def render_calendar_grid():
@@ -2380,9 +2460,9 @@ def main(page: ft.Page):
         for w in weekdays_chars:
             header_buttons.append(
                 ft.Container(
-                    width=CELL_W, height=28, bgcolor="#EEF2FF", border_radius=8,
+                    width=CELL_W, height=28, bgcolor=CHIP_LATTE, border_radius=8,
                     alignment=ft.alignment.center,
-                    content=ft.Text(w, size=11, color="#4F46E5", font_family="Vazir-Bold")
+                    content=ft.Text(w, size=11, color=MOCHA_PRIMARY, font_family="Vazir-Bold")
                 )
             )
 
@@ -2415,15 +2495,16 @@ def main(page: ft.Page):
                 load_dashboard_data()
 
             if is_future:
-                btn_bg, btn_col, click_action = "#F8FAFC", "#CBD5E1", None
+                btn_bg, btn_col, btn_border, click_action = BG_CREAM, "#C9B8A6", None, None
             else:
-                btn_bg = "#4F46E5" if is_selected else ("#FEF3C7" if is_today else "#F1F5F9")
-                btn_col = ft.colors.WHITE if is_selected else ("#92400E" if is_today else "#334155")
+                btn_bg = MOCHA_PRIMARY if is_selected else (CHIP_LATTE if is_today else SURFACE_LATTE)
+                btn_col = CARD_IVORY if is_selected else ESPRESSO_DARK
+                btn_border = ft.border.all(1.5, MOCHA_PRIMARY) if is_today and not is_selected else None
                 click_action = pick_day
 
             row_buttons.append(
                 ft.Container(
-                    width=CELL_W, height=CELL_H, bgcolor=btn_bg, border_radius=9,
+                    width=CELL_W, height=CELL_H, bgcolor=btn_bg, border=btn_border, border_radius=9,
                     alignment=ft.alignment.center, on_click=click_action,
                     content=ft.Text(str(d), size=11, font_family="Vazir-Bold", color=btn_col)
                 )
@@ -2467,8 +2548,8 @@ def main(page: ft.Page):
     cal_dlg = ft.AlertDialog(
         rtl=True,
         shape=ft.RoundedRectangleBorder(radius=20),
-        bgcolor=ft.colors.WHITE,
-        surface_tint_color=ft.colors.WHITE,
+        bgcolor=CARD_IVORY,
+        surface_tint_color=CARD_IVORY,
         title_padding=ft.padding.only(top=18, left=18, right=18, bottom=6),
         content_padding=ft.padding.symmetric(horizontal=18, vertical=10),
         actions_padding=ft.padding.only(left=18, right=18, bottom=14, top=4),
@@ -2476,14 +2557,14 @@ def main(page: ft.Page):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             controls=[
                 ft.Container(
-                    content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color="#4F46E5", size=20),
-                    bgcolor="#EEF2FF", width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                    content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                    bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
                     on_click=lambda e: change_cal_month(-1)
                 ),
                 cal_header_text,
                 ft.Container(
-                    content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color="#4F46E5", size=20),
-                    bgcolor="#EEF2FF", width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                    content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                    bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
                     on_click=lambda e: change_cal_month(1)
                 ),
             ]
@@ -2501,9 +2582,13 @@ def main(page: ft.Page):
                 controls=[
                     ft.ElevatedButton(
                         "برو به امروز", icon=ft.icons.TODAY_ROUNDED,
-                        bgcolor="#EEF2FF", color="#4F46E5", elevation=0, on_click=go_to_today
+                        bgcolor=CHIP_LATTE, color=ESPRESSO_DARK, elevation=0, on_click=go_to_today
                     ),
-                    ft.TextButton("بستن", on_click=lambda e: close_dialog(cal_dlg))
+                    ft.TextButton(
+                        "بستن",
+                        style=ft.ButtonStyle(color=ESPRESSO_DARK),
+                        on_click=lambda e: close_dialog(cal_dlg)
+                    )
                 ]
             )
         ]
@@ -2553,19 +2638,19 @@ def main(page: ft.Page):
             mode_selector_row.controls.append(
                 ft.Container(
                     expand=1,
-                    bgcolor="#4F46E5" if is_active else ft.colors.WHITE,
-                    border=ft.border.all(1, "#4F46E5" if is_active else "#E2E8F0"),
+                    bgcolor=MOCHA_PRIMARY if is_active else CARD_IVORY,
+                    border=ft.border.all(1, MOCHA_PRIMARY if is_active else BORDER_SAND),
                     border_radius=12,
                     padding=ft.padding.symmetric(horizontal=8, vertical=8),
                     alignment=ft.alignment.center,
                     on_click=lambda e, k=m_key: switch_filter_mode(k),
-                    shadow=ft.BoxShadow(blur_radius=8, color=ft.colors.with_opacity(0.2 if is_active else 0.03, "#4F46E5"), offset=ft.Offset(0, 2)),
+                    shadow=ft.BoxShadow(blur_radius=8, color=ft.colors.with_opacity(0.2 if is_active else 0.03, MOCHA_PRIMARY), offset=ft.Offset(0, 2)),
                     content=ft.Row(
                         alignment=ft.MainAxisAlignment.CENTER,
                         spacing=5,
                         controls=[
-                            ft.Icon(m_icon, size=15, color=ft.colors.WHITE if is_active else "#64748B"),
-                            ft.Text(m_label, size=11, font_family="Vazir-Bold", color=ft.colors.WHITE if is_active else "#475569"),
+                            ft.Icon(m_icon, size=15, color=CARD_IVORY if is_active else TEXT_MUTED),
+                            ft.Text(m_label, size=11, font_family="Vazir-Bold", color=CARD_IVORY if is_active else ESPRESSO_DARK),
                         ]
                     )
                 )
@@ -2577,16 +2662,16 @@ def main(page: ft.Page):
             day_label = f"امروز، {jd} {JALALI_MONTHS[jm - 1]} {jy}" if is_today_selected else f"{jd} {JALALI_MONTHS[jm - 1]} {jy}"
 
             date_navigator_container.content = ft.Container(
-                bgcolor=ft.colors.WHITE,
+                bgcolor=CARD_IVORY,
                 border_radius=14,
                 padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                border=ft.border.all(1, "#E2E8F0"),
+                border=ft.border.all(1, BORDER_SAND),
                 content=ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
                         ft.Container(
-                            content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color="#4338CA", size=20),
-                            bgcolor="#EEF2FF", width=32, height=32, border_radius=8, alignment=ft.alignment.center,
+                            content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                            bgcolor=SURFACE_LATTE, width=32, height=32, border_radius=8, alignment=ft.alignment.center,
                             tooltip="روز بعد",
                             on_click=lambda e: step_day(1)
                         ),
@@ -2597,15 +2682,15 @@ def main(page: ft.Page):
                             content=ft.Row(
                                 spacing=6,
                                 controls=[
-                                    ft.Icon(ft.icons.EDIT_CALENDAR_ROUNDED, color="#4F46E5", size=17),
-                                    ft.Text(day_label, size=12, font_family="Vazir-Bold", color="#0F172A"),
-                                    ft.Text("(تقویم)", size=10, color="#4F46E5", font_family="Vazir-Bold"),
+                                    ft.Icon(ft.icons.EDIT_CALENDAR_ROUNDED, color=MOCHA_PRIMARY, size=17),
+                                    ft.Text(day_label, size=12, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                                    ft.Text("(تقویم)", size=10, color=CARAMEL_ACCENT, font_family="Vazir-Bold"),
                                 ]
                             )
                         ),
                         ft.Container(
-                            content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color="#4338CA", size=20),
-                            bgcolor="#EEF2FF", width=32, height=32, border_radius=8, alignment=ft.alignment.center,
+                            content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                            bgcolor=SURFACE_LATTE, width=32, height=32, border_radius=8, alignment=ft.alignment.center,
                             tooltip="روز قبل",
                             on_click=lambda e: step_day(-1)
                         ),
@@ -2615,29 +2700,29 @@ def main(page: ft.Page):
         elif filter_mode == "month":
             month_title = f"آمار ماه {JALALI_MONTHS[selected_j_month - 1]} {selected_j_year}"
             date_navigator_container.content = ft.Container(
-                bgcolor=ft.colors.WHITE,
+                bgcolor=CARD_IVORY,
                 border_radius=14,
                 padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                border=ft.border.all(1, "#E2E8F0"),
+                border=ft.border.all(1, BORDER_SAND),
                 content=ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
                         ft.Container(
-                            content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color="#4338CA", size=20),
-                            bgcolor="#EEF2FF", width=32, height=32, border_radius=8, alignment=ft.alignment.center,
+                            content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                            bgcolor=SURFACE_LATTE, width=32, height=32, border_radius=8, alignment=ft.alignment.center,
                             tooltip="ماه بعد",
                             on_click=lambda e: step_month(1)
                         ),
                         ft.Row(
                             spacing=6,
                             controls=[
-                                ft.Icon(ft.icons.DATE_RANGE_ROUNDED, color="#4F46E5", size=18),
-                                ft.Text(month_title, size=13, font_family="Vazir-Bold", color="#0F172A"),
+                                ft.Icon(ft.icons.DATE_RANGE_ROUNDED, color=MOCHA_PRIMARY, size=18),
+                                ft.Text(month_title, size=13, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                             ]
                         ),
                         ft.Container(
-                            content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color="#4338CA", size=20),
-                            bgcolor="#EEF2FF", width=32, height=32, border_radius=8, alignment=ft.alignment.center,
+                            content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                            bgcolor=SURFACE_LATTE, width=32, height=32, border_radius=8, alignment=ft.alignment.center,
                             tooltip="ماه قبل",
                             on_click=lambda e: step_month(-1)
                         ),
@@ -2646,11 +2731,12 @@ def main(page: ft.Page):
             )
         else:
             date_navigator_container.content = ft.Container(
-                bgcolor="#EEF2FF",
+                bgcolor=SURFACE_LATTE,
+                border=ft.border.all(1, BORDER_SAND),
                 border_radius=10,
                 padding=8,
                 alignment=ft.alignment.center,
-                content=ft.Text("نمایش تجمیعی تمام تراکنش‌های ثبت‌شده از ابتدا", size=11, font_family="Vazir-Bold", color="#4F46E5")
+                content=ft.Text("نمایش تجمیعی تمام تراکنش‌های ثبت‌شده از ابتدا", size=11, font_family="Vazir-Bold", color=MOCHA_PRIMARY)
             )
         page.update()
 
@@ -2704,15 +2790,15 @@ def main(page: ft.Page):
         if not rows:
             report_items_col.controls.append(
                 ft.Container(
-                    bgcolor=ft.colors.WHITE,
+                    bgcolor=CARD_IVORY,
                     border_radius=16,
-                    border=ft.border.all(1, "#E2E8F0"),
+                    border=ft.border.all(1, BORDER_SAND),
                     content=ft.Column(
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         spacing=6,
                         controls=[
-                            ft.Icon(ft.icons.INSERT_CHART_OUTLINED_ROUNDED, size=38, color="#94A3B8"),
-                            ft.Text("در این بازه زمانی هیچ سفارشی ثبت نشده است.", color="#64748B", size=12, font_family="Vazir-Bold"),
+                            ft.Icon(ft.icons.INSERT_CHART_OUTLINED_ROUNDED, size=38, color=CARAMEL_ACCENT),
+                            ft.Text("در این بازه زمانی هیچ سفارشی ثبت نشده است.", color=TEXT_MUTED, size=12, font_family="Vazir-Bold"),
                         ]
                     ),
                     alignment=ft.alignment.center,
@@ -2725,11 +2811,11 @@ def main(page: ft.Page):
                 share_pct = int((p_sale / total_rev) * 100) if total_rev > 0 else 0
 
                 card = ft.Container(
-                    bgcolor=ft.colors.WHITE,
+                    bgcolor=CARD_IVORY,
                     border_radius=14,
                     padding=12,
-                    border=ft.border.all(1, "#E2E8F0"),
-                    shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.03, ft.colors.BLACK), offset=ft.Offset(0, 2)),
+                    border=ft.border.all(1, BORDER_SAND),
+                    shadow=ft.BoxShadow(blur_radius=6, color=ft.colors.with_opacity(0.04, MOCHA_PRIMARY), offset=ft.Offset(0, 2)),
                     content=ft.Column(
                         spacing=6,
                         controls=[
@@ -2740,31 +2826,31 @@ def main(page: ft.Page):
                                         spacing=10,
                                         controls=[
                                             ft.Container(
-                                                content=ft.Text(f"{p_qty}×", color=ft.colors.WHITE, font_family="Vazir-Bold", size=12),
-                                                gradient=ft.LinearGradient(colors=["#4F46E5", "#6366F1"]),
+                                                content=ft.Text(f"{p_qty}×", color="#FFFDF9", font_family="Vazir-Bold", size=12),
+                                                gradient=ft.LinearGradient(colors=[MOCHA_PRIMARY, CARAMEL_ACCENT]),
                                                 padding=ft.padding.symmetric(horizontal=10, vertical=6),
                                                 border_radius=10
                                             ),
                                             ft.Column(
                                                 spacing=2,
                                                 controls=[
-                                                    ft.Text(f"{rank_idx}. {p_name}", font_family="Vazir-Bold", size=13, color="#0F172A"),
-                                                    ft.Text(f"فروش کل: {format_price(p_sale)} تومان ({share_pct}٪ از کل فروش)", size=10, color="#64748B")
+                                                    ft.Text(f"{rank_idx}. {p_name}", font_family="Vazir-Bold", size=13, color=ESPRESSO_DARK),
+                                                    ft.Text(f"فروش کل: {format_price(p_sale)} تومان ({share_pct}٪ از کل فروش)", size=10, color=TEXT_MUTED)
                                                 ]
                                             )
                                         ]
                                     ),
                                     ft.Container(
-                                        bgcolor="#ECFDF5",
-                                        border=ft.border.all(1, "#A7F3D0"),
+                                        bgcolor=PROFIT_SURFACE,
+                                        border=ft.border.all(1, PROFIT_BORDER),
                                         padding=ft.padding.symmetric(horizontal=9, vertical=4),
                                         border_radius=10,
                                         content=ft.Column(
                                             horizontal_alignment=ft.CrossAxisAlignment.END,
                                             spacing=1,
                                             controls=[
-                                                ft.Text("سود خالص", size=9, color="#047857"),
-                                                ft.Text(f"+{format_price(p_prof)} ت", size=11, font_family="Vazir-Bold", color="#047857")
+                                                ft.Text("سود خالص", size=9, color=PROFIT_DARK),
+                                                ft.Text(f"+{format_price(p_prof)} ت", size=11, font_family="Vazir-Bold", color=PROFIT_DARK)
                                             ]
                                         )
                                     )
@@ -2772,12 +2858,12 @@ def main(page: ft.Page):
                             ),
                             ft.Container(
                                 height=5,
-                                bgcolor="#F1F5F9",
+                                bgcolor=SURFACE_LATTE,
                                 border_radius=5,
                                 content=ft.Row(
                                     spacing=0,
                                     controls=[
-                                        ft.Container(expand=max(1, share_pct), bgcolor="#4F46E5", border_radius=5),
+                                        ft.Container(expand=max(1, share_pct), bgcolor=CARAMEL_ACCENT, border_radius=5),
                                         ft.Container(expand=max(0, 100 - share_pct)),
                                     ]
                                 )
@@ -2788,15 +2874,16 @@ def main(page: ft.Page):
                 report_items_col.controls.append(card)
         page.update()
 
+    # کارت سود خالص با گرادیانت سبز شاداب و روشن‌تر
     hero_profit_card = ft.Container(
         border_radius=18,
         padding=14,
         gradient=ft.LinearGradient(
             begin=ft.alignment.top_right,
             end=ft.alignment.bottom_left,
-            colors=["#064E3B", "#047857", "#059669"]
+            colors=["#059669", "#10B981", "#34D399"]
         ),
-        shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.25, "#059669"), offset=ft.Offset(0, 4)),
+        shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.22, "#059669"), offset=ft.Offset(0, 4)),
         content=ft.Column(
             spacing=8,
             controls=[
@@ -2807,16 +2894,16 @@ def main(page: ft.Page):
                             spacing=6,
                             controls=[
                                 ft.Container(
-                                    content=ft.Icon(ft.icons.DIAMOND_ROUNDED, color="#34D399", size=18),
-                                    bgcolor=ft.colors.with_opacity(0.15, ft.colors.WHITE),
+                                    content=ft.Icon(ft.icons.TRENDING_UP_ROUNDED, color="#FFFDF9", size=18),
+                                    bgcolor=ft.colors.with_opacity(0.22, "#FFFFFF"),
                                     padding=6,
                                     border_radius=8,
                                 ),
-                                ft.Text("سود خالص دوره انتخابی", size=12, font_family="Vazir-Bold", color="#ECFDF5"),
+                                ft.Text("سود خالص دوره انتخابی", size=12, font_family="Vazir-Bold", color="#FFFDF9"),
                             ]
                         ),
                         ft.Container(
-                            bgcolor="#A7F3D0",
+                            bgcolor="#ECFDF5",
                             padding=ft.padding.symmetric(horizontal=8, vertical=3),
                             border_radius=20,
                             content=profit_margin_badge_text,
@@ -2835,7 +2922,7 @@ def main(page: ft.Page):
                             ]
                         ),
                         ft.Container(
-                            bgcolor=ft.colors.with_opacity(0.15, ft.colors.WHITE),
+                            bgcolor=ft.colors.with_opacity(0.2, ft.colors.WHITE),
                             padding=ft.padding.symmetric(horizontal=10, vertical=5),
                             border_radius=10,
                             content=period_summary_badge,
@@ -2861,23 +2948,23 @@ def main(page: ft.Page):
                     controls=[
                         ft.Container(
                             expand=1,
-                            bgcolor=ft.colors.WHITE,
+                            bgcolor=CARD_IVORY,
                             border_radius=14,
                             padding=11,
-                            border=ft.border.all(1, "#BFDBFE"),
+                            border=ft.border.all(1, BORDER_WARM),
                             content=ft.Row(
                                 spacing=10,
                                 controls=[
                                     ft.Container(
-                                        content=ft.Icon(ft.icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color="#2563EB", size=20),
-                                        bgcolor="#DBEAFE",
+                                        content=ft.Icon(ft.icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                                        bgcolor=SURFACE_LATTE,
                                         padding=8,
                                         border_radius=10
                                     ),
                                     ft.Column(
                                         spacing=1,
                                         controls=[
-                                            ft.Text("درآمد کل", size=10, color="#64748B", font_family="Vazir-Bold"),
+                                            ft.Text("درآمد کل", size=10, color=TEXT_MUTED, font_family="Vazir-Bold"),
                                             total_revenue_text,
                                         ]
                                     )
@@ -2886,23 +2973,24 @@ def main(page: ft.Page):
                         ),
                         ft.Container(
                             expand=1,
-                            bgcolor=ft.colors.WHITE,
+                            bgcolor=CARD_IVORY,
                             border_radius=14,
                             padding=11,
-                            border=ft.border.all(1, "#FDE68A"),
+                            border=ft.border.all(1, COST_RED_BORDER),
                             content=ft.Row(
                                 spacing=10,
                                 controls=[
                                     ft.Container(
-                                        content=ft.Icon(ft.icons.INVENTORY_2_ROUNDED, color="#D97706", size=20),
-                                        bgcolor="#FEF3C7",
+                                        content=ft.Icon(ft.icons.INVENTORY_2_ROUNDED, color=COST_RED_MAIN, size=20),
+                                        bgcolor=COST_RED_BG,
+                                        border=ft.border.all(1, COST_RED_BORDER),
                                         padding=8,
                                         border_radius=10
                                     ),
                                     ft.Column(
                                         spacing=1,
                                         controls=[
-                                            ft.Text("هزینه پایه", size=10, color="#64748B", font_family="Vazir-Bold"),
+                                            ft.Text("هزینه پایه", size=10, color=COST_RED_DARK, font_family="Vazir-Bold"),
                                             total_cost_text,
                                         ]
                                     )
@@ -2911,7 +2999,7 @@ def main(page: ft.Page):
                         ),
                     ]
                 ),
-                ft.Text("رتبه‌بندی پرفروش‌ترین محصولات:", size=12, font_family="Vazir-Bold", color="#0F172A"),
+                ft.Text("رتبه‌بندی پرفروش‌ترین محصولات:", size=12, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                 report_items_col
             ]
         )
@@ -2938,9 +3026,9 @@ def main(page: ft.Page):
     page.navigation_bar = ft.NavigationBar(
         selected_index=1,
         height=65,
-        bgcolor=ft.colors.WHITE,
-        surface_tint_color=ft.colors.WHITE,
-        indicator_color="#E0E7FF",
+        bgcolor=CARD_IVORY,
+        surface_tint_color=CARD_IVORY,
+        indicator_color=CHIP_LATTE,
         elevation=12,
         on_change=on_nav_change,
         destinations=[

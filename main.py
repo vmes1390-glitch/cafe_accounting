@@ -1407,7 +1407,7 @@ def main(page: ft.Page):
         on_change=on_search_change
     )
 
-    # حفظ رنگ‌های اختصاصی و زیبای هر آیکون و بج دسته‌بندی (مثل دانه برف آبی و...)
+    # حفظ رنگ‌های اختصاصی و زیبای هر آیکون و بج دسته‌بندی
     def get_category_style(cat: str):
         styles = {
             "قهوه‌ها": (ft.icons.COFFEE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5"),
@@ -1757,7 +1757,7 @@ def main(page: ft.Page):
     )
 
     # =========================================================================
-    # 2. تب مدیریت منو (تم کرم و کاراملی روشن + هزینه قرمز + سود سبز)
+    # 2. تب مدیریت منو 
     # =========================================================================
     def move_product(prod_id, current_sort, direction):
         conn = sqlite3.connect(DB_NAME)
@@ -1918,7 +1918,6 @@ def main(page: ft.Page):
             category_dropdown.value = cats[0] if cats else None
         page.update()
 
-    # قیمت پایه به رنگ قرمز (هزینه) و قیمت فروش به رنگ قهوه‌ای کاراملی
     cost_words_text = ft.Text("صفر تومان", size=10, color=COST_RED_MAIN, font_family="Vazir-Bold")
     sell_words_text = ft.Text("صفر تومان", size=10, color=MOCHA_PRIMARY, font_family="Vazir-Bold")
     live_profit_preview_text = ft.Text("لطفاً قیمت پایه و فروش را وارد کنید", size=11, color=MOCHA_PRIMARY, font_family="Vazir-Bold")
@@ -2416,7 +2415,7 @@ def main(page: ft.Page):
     )
 
     # =========================================================================
-    # 3. تب داشبورد و گزارش مالی پیشرفته (سود سبز، هزینه قرمز، محیط روشن کرم/کاراملی)
+    # 3. تب داشبورد و گزارش مالی پیشرفته
     # =========================================================================
     total_revenue_text = ft.Text("0", size=14, font_family="Vazir-Bold", color=MOCHA_PRIMARY)
     total_cost_text = ft.Text("0", size=14, font_family="Vazir-Bold", color=COST_RED_MAIN)
@@ -2433,6 +2432,7 @@ def main(page: ft.Page):
     cal_header_text = ft.Text("", size=13, font_family="Vazir-Bold", color=ESPRESSO_DARK)
     days_grid_col = ft.Column(spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
+    # رفع قطعی باگ چپ به راست تقویم 
     def render_calendar_grid():
         CELL_W = 34
         CELL_H = 34
@@ -2469,7 +2469,8 @@ def main(page: ft.Page):
         days_grid_col.controls.append(
             ft.Container(
                 margin=ft.padding.only(bottom=6),
-                content=ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=header_buttons[::-1])
+                # اضافه شدن rtl و حذف کننده برعکس کردن لیست برای رفع باگ
+                content=ft.Row(rtl=True, alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=header_buttons)
             )
         )
 
@@ -2511,16 +2512,18 @@ def main(page: ft.Page):
             )
 
             if len(row_buttons) == 7:
+                # اضافه شدن rtl و حذف کننده برعکس کردن لیست برای رفع باگ
                 days_grid_col.controls.append(
-                    ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=row_buttons[::-1])
+                    ft.Row(rtl=True, alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=row_buttons)
                 )
                 row_buttons = []
 
         if row_buttons:
             while len(row_buttons) < 7:
                 row_buttons.append(ft.Container(width=CELL_W, height=CELL_H))
+            # اضافه شدن rtl و حذف کننده برعکس کردن لیست برای رفع باگ
             days_grid_col.controls.append(
-                ft.Row(alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=row_buttons[::-1])
+                ft.Row(rtl=True, alignment=ft.MainAxisAlignment.CENTER, spacing=ROW_SPACING, controls=row_buttons)
             )
 
         refresh_ui(cal_header_text, days_grid_col, cal_dlg)
@@ -2545,6 +2548,9 @@ def main(page: ft.Page):
         update_dashboard_controls()
         load_dashboard_data()
 
+    # دیالوگ تقویم به همراه اصلاح جهت فلش‌ها و جابجایی دکمه‌های پایین
+    # دیالوگ تقویم به همراه اصلاح جهت فلش‌ها و جابجایی دکمه‌های پایین
+    # ۱. دیالوگ تقویم (نوک به چپ = ماه بعد +1 | نوک به راست = ماه قبل -1)
     cal_dlg = ft.AlertDialog(
         rtl=True,
         shape=ft.RoundedRectangleBorder(radius=20),
@@ -2556,16 +2562,20 @@ def main(page: ft.Page):
         title=ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             controls=[
+                # این دکمه روی صفحه نوکش به چپ (<) است -> ماه را زیاد می‌کند (+1)
                 ft.Container(
                     content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
                     bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                    on_click=lambda e: change_cal_month(-1)
+                    tooltip="ماه بعد",
+                    on_click=lambda e: change_cal_month(1)
                 ),
                 cal_header_text,
+                # این دکمه روی صفحه نوکش به راست (>) است -> ماه را کم می‌کند (-1)
                 ft.Container(
                     content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
                     bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                    on_click=lambda e: change_cal_month(1)
+                    tooltip="ماه قبل",
+                    on_click=lambda e: change_cal_month(-1)
                 ),
             ]
         ),
@@ -2580,14 +2590,14 @@ def main(page: ft.Page):
                 rtl=True,
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 controls=[
-                    ft.ElevatedButton(
-                        "برو به امروز", icon=ft.icons.TODAY_ROUNDED,
-                        bgcolor=CHIP_LATTE, color=ESPRESSO_DARK, elevation=0, on_click=go_to_today
-                    ),
                     ft.TextButton(
                         "بستن",
                         style=ft.ButtonStyle(color=ESPRESSO_DARK),
                         on_click=lambda e: close_dialog(cal_dlg)
+                    ),
+                    ft.ElevatedButton(
+                        "برو به امروز", icon=ft.icons.TODAY_ROUNDED,
+                        bgcolor=CHIP_LATTE, color=ESPRESSO_DARK, elevation=0, on_click=go_to_today
                     )
                 ]
             )
@@ -2626,6 +2636,7 @@ def main(page: ft.Page):
         update_dashboard_controls()
         load_dashboard_data()
 
+    # ۲. نوار تاریخ داشبورد (نوک به چپ = روز/ماه بعد +1 | نوک به راست = روز/ماه قبل -1)
     def update_dashboard_controls():
         modes = [
             ("day", "گزارش روزانه", ft.icons.TODAY_ROUNDED),
@@ -2667,8 +2678,10 @@ def main(page: ft.Page):
                 padding=ft.padding.symmetric(horizontal=8, vertical=4),
                 border=ft.border.all(1, BORDER_SAND),
                 content=ft.Row(
+                    rtl=True,
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
+                        # نوک فلش به چپ (<) است -> روز را بیشتر می‌کند (+1)
                         ft.Container(
                             content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
                             bgcolor=SURFACE_LATTE, width=32, height=32, border_radius=8, alignment=ft.alignment.center,
@@ -2680,6 +2693,7 @@ def main(page: ft.Page):
                             border_radius=8,
                             padding=ft.padding.symmetric(horizontal=10, vertical=4),
                             content=ft.Row(
+                                rtl=True,
                                 spacing=6,
                                 controls=[
                                     ft.Icon(ft.icons.EDIT_CALENDAR_ROUNDED, color=MOCHA_PRIMARY, size=17),
@@ -2688,6 +2702,7 @@ def main(page: ft.Page):
                                 ]
                             )
                         ),
+                        # نوک فلش به راست (>) است -> روز را کمتر می‌کند (-1)
                         ft.Container(
                             content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
                             bgcolor=SURFACE_LATTE, width=32, height=32, border_radius=8, alignment=ft.alignment.center,
@@ -2705,8 +2720,10 @@ def main(page: ft.Page):
                 padding=ft.padding.symmetric(horizontal=8, vertical=4),
                 border=ft.border.all(1, BORDER_SAND),
                 content=ft.Row(
+                    rtl=True,
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
+                        # نوک فلش به چپ (<) است -> ماه را بیشتر می‌کند (+1)
                         ft.Container(
                             content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
                             bgcolor=SURFACE_LATTE, width=32, height=32, border_radius=8, alignment=ft.alignment.center,
@@ -2714,12 +2731,14 @@ def main(page: ft.Page):
                             on_click=lambda e: step_month(1)
                         ),
                         ft.Row(
+                            rtl=True,
                             spacing=6,
                             controls=[
                                 ft.Icon(ft.icons.DATE_RANGE_ROUNDED, color=MOCHA_PRIMARY, size=18),
                                 ft.Text(month_title, size=13, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                             ]
                         ),
+                        # نوک فلش به راست (>) است -> ماه را کمتر می‌کند (-1)
                         ft.Container(
                             content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
                             bgcolor=SURFACE_LATTE, width=32, height=32, border_radius=8, alignment=ft.alignment.center,
@@ -2874,7 +2893,7 @@ def main(page: ft.Page):
                 report_items_col.controls.append(card)
         page.update()
 
-    # کارت سود خالص با گرادیانت سبز شاداب و روشن‌تر
+    # کارت سود خالص با گرادیانت سبز شاداب
     hero_profit_card = ft.Container(
         border_radius=18,
         padding=14,

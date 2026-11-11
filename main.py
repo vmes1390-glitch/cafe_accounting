@@ -82,6 +82,14 @@ class _CompatBorder:
                 return ft.Border(top=side, bottom=side, left=side, right=side)
         return None
 
+    @staticmethod
+    def only(left=None, top=None, right=None, bottom=None):
+        if hasattr(ft, "Border"):
+            if hasattr(ft.Border, "only"):
+                return ft.Border.only(left=left, top=top, right=right, bottom=bottom)
+            return ft.Border(left=left, top=top, right=right, bottom=bottom)
+        return None
+
 ft.border = _CompatBorder()
 
 class _CompatBorderRadius:
@@ -203,10 +211,11 @@ DEFAULT_CATEGORIES = [
     "نوشیدنی‌های گرم بر پایۀ قهوه",
     "نوشیدنی‌های سرد بر پایۀ قهوه",
     "شیک‌ها",
-    "ماکتل‌ها",          # <--- این مورد را اینجا اضافه کنید
+    "ماکتل‌ها",
     "بستنی بار",
     "نوشیدنی‌های گرم",
     "چای‌ها",
+    "دمنوش‌ها",
     "کیک و دسر",
 ]
 
@@ -660,27 +669,50 @@ def main(page: ft.Page):
         except Exception:
             pass
 
+    # =========================================================================
+    # سیستم مدیریت متمرکز پنجره‌های رویی (وسط‌چین ۱۰۰٪ + قفل کامل دکمه‌های زیرین)
+    # =========================================================================
+    main_app_col = ft.Column(spacing=0, expand=True)
+
+    def make_centered_modal(card_ctrl):
+        layer = ft.Container(
+            visible=False,
+            top=0,
+            bottom=0,
+            left=0,
+            right=0,
+            bgcolor=ft.colors.with_opacity(0.55, "#000000"),
+            alignment=ft.alignment.center,
+            padding=ft.padding.symmetric(horizontal=18, vertical=20),
+            on_click=lambda e: None,  # جذب کامل کلیک‌ها و جلوگیری از نفوذ به زیرین
+            content=card_ctrl,
+        )
+        layer.open = False
+        return layer
+
+    all_modals = []
+
+    def sync_modal_state():
+        # اگر دیالوگ تایید (حذف/بازگردانی) باز باشد، حتی پنجره روییِ زیر آن هم قفل می‌شود
+        confirm_is_open = getattr(confirm_dlg, "visible", False)
+        any_modal_open = any(getattr(m, "visible", False) for m in all_modals)
+
+        for m in all_modals:
+            if m is not confirm_dlg and getattr(m, "content", None) is not None:
+                m.content.disabled = confirm_is_open
+
+        main_app_col.disabled = any_modal_open
+        refresh_ui(main_app_col, *all_modals)
+
     def open_ctrl(ctrl):
         ctrl.open = True
-        if hasattr(page, "open"):
-            try:
-                page.open(ctrl)
-                return
-            except Exception:
-                pass
-        if ctrl not in page.overlay:
-            page.overlay.append(ctrl)
-        refresh_ui(ctrl)
+        ctrl.visible = True
+        sync_modal_state()
 
     def close_ctrl(ctrl):
         ctrl.open = False
-        if hasattr(page, "close"):
-            try:
-                page.close(ctrl)
-                return
-            except Exception:
-                pass
-        refresh_ui(ctrl)
+        ctrl.visible = False
+        sync_modal_state()
 
     # =========================================================================
     # سیستم نوتیفیکیشن هوشمند و ضدباگ (نمایش نامحدود + نمایش روی صفحات باز)
@@ -718,7 +750,6 @@ def main(page: ft.Page):
         )
     )
 
-    # بنر نوتیفیکیشن مخصوص داخل پنجره «فاکتورهای اخیر»
     orders_dlg_banner_text = ft.Text("", size=11, font_family="Vazir-Bold", color=CARD_IVORY, expand=True)
     orders_dlg_banner = ft.Container(
         visible=False,
@@ -736,7 +767,6 @@ def main(page: ft.Page):
         )
     )
 
-    # بنر نوتیفیکیشن مخصوص داخل پنجره «افزودن دسته‌بندی جدید»
     cat_dlg_banner_text = ft.Text("", size=11, font_family="Vazir-Bold", color=CARD_IVORY, expand=True)
     cat_dlg_banner = ft.Container(
         visible=False,
@@ -755,7 +785,7 @@ def main(page: ft.Page):
     )
 
     def show_snackbar(message: str, bg_color=MOCHA_PRIMARY):
-        if getattr(cat_dialog, "open", False):
+        if getattr(cat_dialog, "visible", False):
             if cat_dlg_timer_ref[0] is not None:
                 try:
                     cat_dlg_timer_ref[0].cancel()
@@ -776,7 +806,7 @@ def main(page: ft.Page):
             t_cat.start()
             return
 
-        if getattr(recent_orders_dlg, "open", False):
+        if getattr(recent_orders_dlg, "visible", False):
             if orders_dlg_timer_ref[0] is not None:
                 try:
                     orders_dlg_timer_ref[0].cancel()
@@ -817,9 +847,7 @@ def main(page: ft.Page):
         snack_timer_ref[0] = t
         t.start()
 
-    # ------------------ شروع کدهایی که باید جایگزین کنی ------------------
-    
-
+    # --- سرویس کلیپ‌بورد ---
     _clipboard_service = None
     if hasattr(ft, "Clipboard"):
         try:
@@ -830,7 +858,6 @@ def main(page: ft.Page):
             pass
 
     async def copy_to_clipboard_async(text_val: str):
-        # ۱. کپی در ویندوز (حالت دسکتاپ)
         if os.name == "nt" and not getattr(page, "web", False):
             try:
                 import subprocess
@@ -843,7 +870,6 @@ def main(page: ft.Page):
             except Exception:
                 pass
 
-        # ۲. کپی در اندروید و فلت ۱.۰ از طریق سرویس کلیپ‌بورد (بدون ورود به overlay)
         if _clipboard_service is not None:
             try:
                 if hasattr(page, "services") and _clipboard_service not in page.services:
@@ -856,7 +882,6 @@ def main(page: ft.Page):
             except Exception:
                 pass
 
-        # ۳. پشتیبانی از نسخه‌های قدیمی‌تر فلت
         if hasattr(page, "set_clipboard"):
             try:
                 res = page.set_clipboard(text_val)
@@ -884,7 +909,7 @@ def main(page: ft.Page):
                     except Exception:
                         continue
 
-    # --- دیالوگ تایید یکتا ---
+    # --- دیالوگ تایید یکتا (وسط صفحه) ---
     confirm_action_ref = [None]
     confirm_icon = ft.Icon(ft.icons.DELETE_SWEEP_ROUNDED, color=COST_RED_MAIN, size=32)
     confirm_icon_box = ft.Container(
@@ -918,40 +943,51 @@ def main(page: ft.Page):
         on_click=_on_confirm_yes
     )
 
-    confirm_dlg = ft.AlertDialog(
-        modal=True,
-        rtl=True,
-        on_dismiss=lambda e: setattr(confirm_dlg, "open", False),
-        shape=ft.RoundedRectangleBorder(radius=22),
+    confirm_card_box = ft.Container(
+        width=330,
         bgcolor=CARD_IVORY,
-        surface_tint_color=CARD_IVORY,
-        title=ft.Column(
-            rtl=True,
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=10,
-            controls=[confirm_icon_box, confirm_title_label]
+        border_radius=22,
+        padding=ft.padding.symmetric(horizontal=20, vertical=18),
+        shadow=ft.BoxShadow(
+            blur_radius=24,
+            color=ft.colors.with_opacity(0.30, "#000000"),
+            offset=ft.Offset(0, 8),
         ),
-        content=confirm_msg_label,
-        actions=[
-            ft.Row(
-                rtl=True,
-                alignment=ft.MainAxisAlignment.CENTER,
-                spacing=10,
-                controls=[
-                    ft.ElevatedButton(
-                        "انصراف",
-                        bgcolor=SURFACE_LATTE,
-                        color=ESPRESSO_DARK,
-                        elevation=0,
-                        height=40,
-                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
-                        on_click=_on_confirm_no
-                    ),
-                    confirm_yes_btn,
-                ]
-            )
-        ],
+        on_click=lambda e: None,
+        rtl=True,
+        content=ft.Column(
+            rtl=True,
+            tight=True,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+            controls=[
+                confirm_icon_box,
+                confirm_title_label,
+                confirm_msg_label,
+                ft.Container(
+                    padding=ft.padding.only(top=6),
+                    content=ft.Row(
+                        rtl=True,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=10,
+                        controls=[
+                            ft.ElevatedButton(
+                                "انصراف",
+                                bgcolor=SURFACE_LATTE,
+                                color=ESPRESSO_DARK,
+                                elevation=0,
+                                height=40,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+                                on_click=_on_confirm_no
+                            ),
+                            confirm_yes_btn,
+                        ]
+                    )
+                )
+            ]
+        )
     )
+    confirm_dlg = make_centered_modal(confirm_card_box)
 
     def show_confirm_dialog(
         title_text: str,
@@ -976,7 +1012,6 @@ def main(page: ft.Page):
         confirm_yes_btn.bgcolor = confirm_color
 
         open_ctrl(confirm_dlg)
-        refresh_ui(confirm_dlg)
 
     def close_dialog(dlg):
         close_ctrl(dlg)
@@ -991,9 +1026,9 @@ def main(page: ft.Page):
         load_dashboard_data()
 
     # =========================================================================
-    # مرکز بکاپ و بازیابی اطلاعات (کارت ثابت ضدبه‌هم‌ریختگی کیبورد)
+    # مرکز بکاپ و بازیابی اطلاعات (وسط صفحه + قفل کامل زیرین)
     # =========================================================================
-    backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=120)
+    backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=130)
     status_timer_ref = [None]
     copy_timer_ref = [None]
 
@@ -1045,8 +1080,7 @@ def main(page: ft.Page):
     )
 
     def close_bkp_modal(e=None):
-        bkp_dlg.visible = False
-        refresh_ui(bkp_dlg)
+        close_ctrl(bkp_dlg)
 
     def show_dialog_status(msg: str, is_error=False):
         if status_timer_ref[0] is not None:
@@ -1287,12 +1321,10 @@ def main(page: ft.Page):
         )
 
     bkp_card_box = ft.Container(
-        top=30,
-        left=20,
-        right=20,
+        width=375,
         bgcolor=CARD_IVORY,
         border_radius=20,
-        padding=ft.padding.only(top=14, left=16, right=16, bottom=8),
+        padding=ft.padding.only(top=16, left=16, right=16, bottom=10),
         shadow=ft.BoxShadow(
             blur_radius=24,
             color=ft.colors.with_opacity(0.28, "#000000"),
@@ -1302,7 +1334,7 @@ def main(page: ft.Page):
         rtl=True,
         content=ft.Column(
             rtl=True,
-            spacing=6,
+            spacing=8,
             tight=True,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
@@ -1382,28 +1414,7 @@ def main(page: ft.Page):
         )
     )
 
-    bkp_dlg = ft.Stack(
-        visible=False,
-        top=0,
-        bottom=0,
-        left=0,
-        right=0,
-        controls=[
-            ft.Container(
-                top=0,
-                bottom=0,
-                left=0,
-                right=0,
-                bgcolor=ft.colors.with_opacity(0.52, "#000000"),
-                on_click=close_bkp_modal,
-            ),
-            bkp_card_box,
-        ]
-    )
-    try:
-        bkp_dlg.clip_behavior = ft.ClipBehavior.NONE
-    except Exception:
-        pass
+    bkp_dlg = make_centered_modal(bkp_card_box)
 
     def open_backup_manager_dialog(e):
         if status_timer_ref[0] is not None:
@@ -1418,12 +1429,8 @@ def main(page: ft.Page):
         copy_btn.icon = ft.icons.CONTENT_COPY_ROUNDED
         copy_btn.bgcolor = CHIP_LATTE
         copy_btn.color = ESPRESSO_DARK
-        if bkp_dlg not in page.overlay:
-            page.overlay.append(bkp_dlg)
         render_backups_list()
-        bkp_dlg.visible = True
-        refresh_ui(bkp_dlg)
-    # ------------------ پایان کدهایی که باید جایگزین کنی ------------------
+        open_ctrl(bkp_dlg)
 
     # --- هدر بالای برنامه ---
     today_jy, today_jm, today_jd = gregorian_to_jalali(now_dt.year, now_dt.month, now_dt.day)
@@ -1612,22 +1619,21 @@ def main(page: ft.Page):
             "شیک‌ها": (ft.icons.BLENDER_ROUNDED, "#6D28D9", "#EDE9FE", "#DDD6FE"),
             "ماکتل‌ها": (ft.icons.LOCAL_BAR_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD"),
             "بستنی بار": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
-            "بستنی بارها": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
             "نوشیدنی‌های گرم": (ft.icons.LOCAL_DRINK_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA"),
             "چای‌ها": (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0"),
+            "دمنوش‌ها": (ft.icons.SPA_ROUNDED, "#15803D", "#DCFCE7", "#BBF7D0"),
             "کیک و دسر": (ft.icons.COOKIE_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A"),
-            
         }
         if cat in styles:
             return styles[cat]
 
-        if any(w in cat for w in ("کیک", "دسر", "شیرینی", "کوکی", "کروسان", "وافل", "پنکیک")):
+        if any(w in cat for w in ("شیرینی", "کوکی", "کروسان", "وافل", "پنکیک")):
             return (ft.icons.BAKERY_DINING_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A")
         if any(w in cat for w in ("سرد", "آیس", "فراپه", "ماکتیل", "اسموتی", "آب‌میوه")):
             return (ft.icons.LOCAL_DRINK_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD")
-        if any(w in cat for w in ("چای", "دمنوش", "گیاهی")):
-            return (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0")
-        if any(w in cat for w in ("قهوه", "اسپرسو", "دمی", "ترک")):
+        if any(w in cat for w in ("گیاهی", "عرقیات")):
+            return (ft.icons.ECO_ROUNDED, "#15803D", "#DCFCE7", "#BBF7D0")
+        if any(w in cat for w in ("دمی",)):
             return (ft.icons.LOCAL_CAFE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5")
         if any(w in cat for w in ("غذا", "صبحانه", "اسنک", "پنینی", "پاستا", "ساندویچ", "تست")):
             return (ft.icons.RESTAURANT_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA")
@@ -1768,47 +1774,43 @@ def main(page: ft.Page):
                 cashier_products_col.controls.append(card)
         page.update()
 
-    # --- دیالوگ یکتای فاکتورهای اخیر (لغو سفارش) به همراه بنر نوتیفیکیشن داخلی ---
-    orders_list_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, height=320, width=330)
+    # --- دیالوگ یکتای فاکتورهای اخیر (وسط صفحه) ---
+    orders_list_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, height=310)
 
-    recent_orders_dlg = ft.AlertDialog(
-        modal=True,
-        rtl=True,
-        on_dismiss=lambda e: setattr(recent_orders_dlg, "open", False),
-        shape=ft.RoundedRectangleBorder(radius=20),
+    recent_orders_card = ft.Container(
+        width=365,
         bgcolor=CARD_IVORY,
-        surface_tint_color=CARD_IVORY,
-        title=ft.Row(
+        border_radius=20,
+        padding=ft.padding.only(top=16, left=16, right=16, bottom=10),
+        shadow=ft.BoxShadow(
+            blur_radius=24,
+            color=ft.colors.with_opacity(0.28, "#000000"),
+            offset=ft.Offset(0, 8),
+        ),
+        on_click=lambda e: None,
+        rtl=True,
+        content=ft.Column(
             rtl=True,
-            alignment=ft.MainAxisAlignment.START,
+            tight=True,
             spacing=8,
             controls=[
-                ft.Container(
-                    content=ft.Icon(ft.icons.HISTORY_ROUNDED, color=COST_RED_MAIN, size=20),
-                    bgcolor=COST_RED_BG,
-                    padding=7,
-                    border_radius=10,
+                ft.Row(
+                    rtl=True,
+                    alignment=ft.MainAxisAlignment.START,
+                    spacing=8,
+                    controls=[
+                        ft.Container(
+                            content=ft.Icon(ft.icons.HISTORY_ROUNDED, color=COST_RED_MAIN, size=20),
+                            bgcolor=COST_RED_BG,
+                            padding=7,
+                            border_radius=10,
+                        ),
+                        ft.Text("فاکتورهای اخیر (لغو سفارش)", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                    ]
                 ),
-                ft.Text("فاکتورهای اخیر (لغو سفارش)", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
-            ]
-        ),
-        content=ft.Container(
-            rtl=True,
-            width=330,
-            content=ft.Column(
-                rtl=True,
-                tight=True,
-                spacing=4,
-                controls=[
-                    orders_dlg_banner,
-                    orders_list_col,
-                ]
-            )
-        ),
-        actions=[
-            ft.Container(
-                rtl=True,
-                content=ft.Row(
+                orders_dlg_banner,
+                orders_list_col,
+                ft.Row(
                     rtl=True,
                     alignment=ft.MainAxisAlignment.END,
                     controls=[
@@ -1819,9 +1821,10 @@ def main(page: ft.Page):
                         )
                     ]
                 )
-            )
-        ],
+            ]
+        )
     )
+    recent_orders_dlg = make_centered_modal(recent_orders_card)
 
     def load_recent_orders():
         orders_list_col.controls.clear()
@@ -1965,7 +1968,7 @@ def main(page: ft.Page):
     )
 
     # =========================================================================
-    # 2. تب مدیریت منو (منوی کشویی زیر کادر دسته‌بندی + حذف با لانگ‌پرس در موبایل و ویندوز)
+    # 2. تب مدیریت منو (منوی کشویی زیر کادر دسته‌بندی + حذف با لانگ‌پرس)
     # =========================================================================
     def move_product(prod_id, current_sort, direction):
         conn = sqlite3.connect(DB_NAME)
@@ -1987,7 +1990,6 @@ def main(page: ft.Page):
         load_menu_products()
         load_cashier_products()
 
-    # ------------------ شروع کدهایی که باید جایگزین کنی ------------------
     name_input = ft.TextField(
         label="نام محصول",
         height=44,
@@ -2000,8 +2002,6 @@ def main(page: ft.Page):
         expand=1
     )
 
-    # --- ساخت منوی کشویی آکاردئونی (شناور روی فرم) ---
-    # --- ساخت منوی کشویی آکاردئونی (شناور روی فرم) ---
     form_category_value = [""]
     form_category_label = ft.Text(
         "انتخاب دسته‌بندی...",
@@ -2019,7 +2019,6 @@ def main(page: ft.Page):
         horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
     )
 
-    # عرض پایه روی 174 تنظیم شد تا دقیقا هم‌عرض کادر دسته‌بندی باشد
     custom_dropdown_list_container = ft.Container(
         visible=False,
         bgcolor=CARD_IVORY,
@@ -2027,7 +2026,7 @@ def main(page: ft.Page):
         border_radius=ft.border_radius.only(bottom_left=10, bottom_right=10),
         padding=ft.padding.all(5),
         height=190,
-        width=174,  # هماهنگ دقیق با عرض کادر
+        width=174,
         top=43,
         left=0,
         shadow=ft.BoxShadow(
@@ -2039,14 +2038,14 @@ def main(page: ft.Page):
     )
 
     def close_custom_dropdown(e=None):
-        if custom_dropdown_list_container.visible:
-            custom_dropdown_list_container.visible = False
-            dropdown_backdrop.visible = False
-            dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
-            custom_dropdown_box.border_radius = 10
+        was_open = custom_dropdown_list_container.visible or dropdown_backdrop.visible
+        custom_dropdown_list_container.visible = False
+        dropdown_backdrop.visible = False
+        dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
+        custom_dropdown_box.border_radius = 10
+        if was_open:
             refresh_ui(custom_dropdown_box, custom_dropdown_list_container, dropdown_backdrop)
 
-    # لایه لمسی شفاف برای تشخیص کلیک در بیرون کادر
     dropdown_backdrop = ft.Container(
         visible=False,
         top=0,
@@ -2060,6 +2059,7 @@ def main(page: ft.Page):
         form_category_value[0] = cat_name
         form_category_label.value = cat_name
         close_custom_dropdown()
+        refresh_ui(form_category_label)
 
     last_long_press_ts = [0.0]
 
@@ -2124,7 +2124,6 @@ def main(page: ft.Page):
     def toggle_custom_dropdown(e=None):
         is_open = custom_dropdown_list_container.visible
         if not is_open:
-            # محاسبه دقیق عرض کادر بر اساس عرض زنده پنجره/صفحه نمایش
             page_w = page.width if (page.width and page.width > 0) else 419
             calc_w = int((page_w - 71) / 2)
             if calc_w > 100:
@@ -2135,10 +2134,9 @@ def main(page: ft.Page):
             dropdown_arrow_icon.name = ft.icons.ARROW_DROP_UP_ROUNDED
             custom_dropdown_box.border_radius = ft.border_radius.only(top_left=10, top_right=10)
             refresh_custom_dropdown_list()
+            refresh_ui(custom_dropdown_box, custom_dropdown_list_container, dropdown_backdrop)
         else:
             close_custom_dropdown()
-            return
-        refresh_ui(custom_dropdown_box, custom_dropdown_list_container, dropdown_backdrop)
 
     custom_dropdown_box = ft.Container(
         height=44,
@@ -2179,7 +2177,7 @@ def main(page: ft.Page):
     new_cat_input = ft.TextField(
         label="نام دسته‌بندی جدید",
         text_size=12, height=44, border_radius=10, border_color=BORDER_WARM,
-        focused_border_color=MOCHA_PRIMARY, bgcolor=SURFACE_LATTE, autofocus=True, rtl=True, text_align=ft.TextAlign.RIGHT,
+        focused_border_color=MOCHA_PRIMARY, bgcolor=SURFACE_LATTE, rtl=True, text_align=ft.TextAlign.RIGHT,
     )
 
     def submit_new_category(e):
@@ -2206,39 +2204,46 @@ def main(page: ft.Page):
     def open_new_cat_dialog(e=None):
         cat_dlg_banner.visible = False
         new_cat_input.value = ""
-        custom_dropdown_list_container.visible = False
-        dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
-        custom_dropdown_box.border_radius = 10
-        refresh_ui(custom_dropdown_list_container, custom_dropdown_box)
+        close_custom_dropdown()
         open_ctrl(cat_dialog)
 
-    cat_dialog = ft.AlertDialog(
-        modal=True, rtl=True, on_dismiss=lambda e: setattr(cat_dialog, "open", False),
-        shape=ft.RoundedRectangleBorder(radius=18), bgcolor=CARD_IVORY, surface_tint_color=CARD_IVORY,
-        title=ft.Row(
-            rtl=True, alignment=ft.MainAxisAlignment.START, spacing=8,
+    cat_dialog_card = ft.Container(
+        width=325,
+        bgcolor=CARD_IVORY,
+        border_radius=18,
+        padding=ft.padding.symmetric(horizontal=18, vertical=16),
+        shadow=ft.BoxShadow(
+            blur_radius=24,
+            color=ft.colors.with_opacity(0.28, "#000000"),
+            offset=ft.Offset(0, 8),
+        ),
+        on_click=lambda e: None,
+        rtl=True,
+        content=ft.Column(
+            rtl=True,
+            tight=True,
+            spacing=12,
             controls=[
-                ft.Container(content=ft.Icon(ft.icons.CREATE_NEW_FOLDER_ROUNDED, color=MOCHA_PRIMARY, size=20), bgcolor=CHIP_LATTE, padding=7, border_radius=10),
-                ft.Text("افزودن دسته‌بندی جدید", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
-            ]
-        ),
-        content=ft.Container(
-            width=280, rtl=True, padding=ft.padding.only(top=6),
-            content=ft.Column(rtl=True, tight=True, spacing=4, controls=[cat_dlg_banner, new_cat_input])
-        ),
-        actions=[
-            ft.Container(
-                width=280, rtl=True,
-                content=ft.Row(
+                ft.Row(
+                    rtl=True, alignment=ft.MainAxisAlignment.START, spacing=8,
+                    controls=[
+                        ft.Container(content=ft.Icon(ft.icons.CREATE_NEW_FOLDER_ROUNDED, color=MOCHA_PRIMARY, size=20), bgcolor=CHIP_LATTE, padding=7, border_radius=10),
+                        ft.Text("افزودن دسته‌بندی جدید", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                    ]
+                ),
+                cat_dlg_banner,
+                new_cat_input,
+                ft.Row(
                     rtl=True, alignment=ft.MainAxisAlignment.END, spacing=8,
                     controls=[
                         ft.TextButton("انصراف", style=ft.ButtonStyle(color=ESPRESSO_DARK), on_click=lambda e: close_ctrl(cat_dialog)),
                         ft.ElevatedButton("افزودن", icon=ft.icons.ADD_ROUNDED, bgcolor=MOCHA_PRIMARY, color=ft.colors.WHITE, height=38, rtl=True, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), on_click=submit_new_category),
                     ]
                 )
-            )
-        ],
+            ]
+        )
     )
+    cat_dialog = make_centered_modal(cat_dialog_card)
 
     cost_words_text = ft.Text("صفر تومان", size=10, color=COST_RED_MAIN, font_family="Vazir-Bold")
     sell_words_text = ft.Text("صفر تومان", size=10, color=MOCHA_PRIMARY, font_family="Vazir-Bold")
@@ -2322,7 +2327,7 @@ def main(page: ft.Page):
         content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
         border_radius=10,
         border_color=BORDER_WARM,
-        focused_border_color=MOCHA_PRIMARY,  # تغییر از COST_RED_MAIN به MOCHA_PRIMARY
+        focused_border_color=MOCHA_PRIMARY,
         bgcolor=SURFACE_LATTE,
         on_change=on_cost_price_change
     )
@@ -2340,10 +2345,9 @@ def main(page: ft.Page):
         width=42, height=42, border_radius=10, alignment=ft.alignment.center, tooltip="بستن فرم",
     )
 
-
     menu_products_col = ft.Column(spacing=8)
     menu_count_badge = ft.Text("0 محصول", size=11, font_family="Vazir-Bold", color=MOCHA_PRIMARY)
-    # اینجا کل محتوای فرم جمع آوری شده است
+
     add_form_content = ft.Column(
         spacing=10,
         controls=[
@@ -2385,12 +2389,11 @@ def main(page: ft.Page):
         ]
     )
 
-    # استفاده از Stack برای قرار دادن لیست بازشونده "روی" اجزای فرم
     add_form_stack = ft.Stack(
         controls=[
-            add_form_content,               # لایه پایینی (خود فرم)
+            add_form_content,
             dropdown_backdrop,
-            custom_dropdown_list_container  # لایه بالایی (منوی کشویی که شناور شده)
+            custom_dropdown_list_container
         ]
     )
     try:
@@ -2407,7 +2410,6 @@ def main(page: ft.Page):
         shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.08, MOCHA_PRIMARY), offset=ft.Offset(0, 4)),
         content=add_form_stack
     )
-    # ------------------ پایان کدهایی که باید جایگزین کنی ------------------
 
     show_add_form_btn = ft.ElevatedButton(
         "افزودن آیتم",
@@ -2427,8 +2429,7 @@ def main(page: ft.Page):
         add_form_container.visible = show
         show_add_form_btn.visible = not show
         if not show:
-            custom_dropdown_list_container.visible = False
-            dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
+            close_custom_dropdown()
         page.update()
 
     show_add_form_btn.on_click = lambda e: toggle_form(True)
@@ -2692,7 +2693,7 @@ def main(page: ft.Page):
         content=ft.Column(
             spacing=10,
             expand=True,
-            scroll=ft.ScrollMode.AUTO,  # جلوگیری از تداخل اجزا هنگام باز شدن کیبورد
+            scroll=ft.ScrollMode.AUTO,
             controls=[
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -2855,57 +2856,68 @@ def main(page: ft.Page):
         update_dashboard_controls()
         load_dashboard_data()
 
-    cal_dlg = ft.AlertDialog(
-        rtl=True,
-        on_dismiss=lambda e: setattr(cal_dlg, "open", False),
-        shape=ft.RoundedRectangleBorder(radius=20),
+    cal_card_box = ft.Container(
+        width=325,
         bgcolor=CARD_IVORY,
-        surface_tint_color=CARD_IVORY,
-        title_padding=ft.padding.only(top=18, left=18, right=18, bottom=6),
-        content_padding=ft.padding.symmetric(horizontal=18, vertical=10),
-        actions_padding=ft.padding.only(left=18, right=18, bottom=14, top=4),
-        title=ft.Row(
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        border_radius=20,
+        padding=ft.padding.symmetric(horizontal=18, vertical=16),
+        shadow=ft.BoxShadow(
+            blur_radius=24,
+            color=ft.colors.with_opacity(0.28, "#000000"),
+            offset=ft.Offset(0, 8),
+        ),
+        on_click=lambda e: None,
+        rtl=True,
+        content=ft.Column(
+            rtl=True,
+            tight=True,
+            spacing=12,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             controls=[
-                ft.Container(
-                    content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
-                    bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                    tooltip="ماه بعد",
-                    on_click=lambda e: change_cal_month(1)
+                ft.Row(
+                    rtl=True,
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.Container(
+                            content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                            bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                            tooltip="ماه بعد",
+                            on_click=lambda e: change_cal_month(1)
+                        ),
+                        cal_header_text,
+                        ft.Container(
+                            content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                            bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+                            tooltip="ماه قبل",
+                            on_click=lambda e: change_cal_month(-1)
+                        ),
+                    ]
                 ),
-                cal_header_text,
                 ft.Container(
-                    content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
-                    bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                    tooltip="ماه قبل",
-                    on_click=lambda e: change_cal_month(-1)
+                    width=276,
+                    height=285,
+                    alignment=ft.alignment.center,
+                    content=days_grid_col
                 ),
+                ft.Row(
+                    rtl=True,
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.TextButton(
+                            "بستن",
+                            style=ft.ButtonStyle(color=ESPRESSO_DARK),
+                            on_click=lambda e: close_dialog(cal_dlg)
+                        ),
+                        ft.ElevatedButton(
+                            "برو به امروز", icon=ft.icons.TODAY_ROUNDED,
+                            bgcolor=CHIP_LATTE, color=ESPRESSO_DARK, elevation=0, on_click=go_to_today
+                        )
+                    ]
+                )
             ]
-        ),
-        content=ft.Container(
-            width=276,
-            height=295,
-            alignment=ft.alignment.center,
-            content=days_grid_col
-        ),
-        actions=[
-            ft.Row(
-                rtl=True,
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                controls=[
-                    ft.TextButton(
-                        "بستن",
-                        style=ft.ButtonStyle(color=ESPRESSO_DARK),
-                        on_click=lambda e: close_dialog(cal_dlg)
-                    ),
-                    ft.ElevatedButton(
-                        "برو به امروز", icon=ft.icons.TODAY_ROUNDED,
-                        bgcolor=CHIP_LATTE, color=ESPRESSO_DARK, elevation=0, on_click=go_to_today
-                    )
-                ]
-            )
-        ]
+        )
     )
+    cal_dlg = make_centered_modal(cal_card_box)
 
     def open_jalali_calendar_dialog(e):
         cur_jy, cur_jm, cur_jd = gregorian_to_jalali(selected_date.year, selected_date.month, selected_date.day)
@@ -3325,6 +3337,7 @@ def main(page: ft.Page):
 
     def on_nav_change(e):
         idx = e.control.selected_index
+        close_custom_dropdown()
         if idx == 0:
             refresh_category_dropdown()
             load_menu_products()
@@ -3339,7 +3352,7 @@ def main(page: ft.Page):
             body_container.content = dashboard_view
         page.update()
 
-    page.navigation_bar = ft.NavigationBar(
+    nav_bar = ft.NavigationBar(
         selected_index=1,
         height=65,
         bgcolor=CARD_IVORY,
@@ -3366,6 +3379,15 @@ def main(page: ft.Page):
         ]
     )
 
+    # ثبت تمام لایه‌های مودال برای قفل خودکار دکمه‌های زیرین
+    all_modals.extend([bkp_dlg, recent_orders_dlg, cat_dialog, cal_dlg, confirm_dlg])
+
+    main_app_col.controls.extend([
+        top_app_header,
+        body_container,
+        nav_bar,
+    ])
+
     refresh_category_dropdown()
     refresh_header_today_sales()
     render_cashier_category_chips()
@@ -3376,14 +3398,12 @@ def main(page: ft.Page):
         ft.Stack(
             expand=True,
             controls=[
-                ft.Column(
-                    spacing=0,
-                    expand=True,
-                    controls=[
-                        top_app_header,
-                        body_container
-                    ]
-                ),
+                main_app_col,
+                bkp_dlg,
+                recent_orders_dlg,
+                cat_dialog,
+                cal_dlg,
+                confirm_dlg,
                 floating_toast_card,
             ]
         )

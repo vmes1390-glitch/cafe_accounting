@@ -8,6 +8,7 @@ import base64
 import threading
 import time
 from datetime import datetime, timedelta
+import inspect
 
 # --- سازگارکننده خودکار کدهای فلت 0.24 با فلت نسخه جدید (1.0+) ---
 if not hasattr(ft, "app") and hasattr(ft, "run"):
@@ -815,6 +816,20 @@ def main(page: ft.Page):
         snack_timer_ref[0] = t
         t.start()
 
+    # ------------------ شروع کدهایی که باید جایگزین کنی ------------------
+    
+
+    _clipboard_service = None
+    if hasattr(ft, "Clipboard"):
+        try:
+            _clipboard_service = ft.Clipboard()
+            if hasattr(page, "services") and isinstance(page.services, list):
+                page.services.append(_clipboard_service)
+            elif hasattr(page, "overlay") and isinstance(page.overlay, list):
+                page.overlay.append(_clipboard_service)
+        except Exception:
+            pass
+
     def copy_to_clipboard(text_val: str) -> bool:
         if os.name == "nt":
             try:
@@ -825,19 +840,44 @@ def main(page: ft.Page):
                     check=True,
                     creationflags=0x08000000
                 )
+            except Exception:
+                pass
+
+        async def _async_clip():
+            targets = []
+            if _clipboard_service is not None:
+                targets.append(_clipboard_service)
+            p_clip = getattr(page, "clipboard", None)
+            if p_clip is not None and not isinstance(p_clip, str):
+                targets.append(p_clip)
+            targets.append(page)
+
+            for target in targets:
+                for m_name in ("set", "set_data", "set_clipboard", "set_text"):
+                    fn = getattr(target, m_name, None)
+                    if callable(fn):
+                        try:
+                            res = fn(text_val)
+                            if inspect.iscoroutine(res):
+                                await res
+                            return
+                        except Exception:
+                            continue
+
+        if hasattr(page, "run_task"):
+            try:
+                page.run_task(_async_clip)
                 return True
             except Exception:
                 pass
+
         try:
             if hasattr(page, "set_clipboard"):
                 page.set_clipboard(text_val)
                 return True
-            if hasattr(page, "clipboard"):
-                page.clipboard = text_val
-                return True
         except Exception:
             pass
-        return False
+        return os.name == "nt"
 
     # --- دیالوگ تایید یکتا ---
     confirm_action_ref = [None]
@@ -946,9 +986,9 @@ def main(page: ft.Page):
         load_dashboard_data()
 
     # =========================================================================
-    # مرکز بکاپ و بازیابی اطلاعات (تم روشن کرم و کاراملی)
+    # مرکز بکاپ و بازیابی اطلاعات (کارت ثابت ضدبه‌هم‌ریختگی کیبورد)
     # =========================================================================
-    backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.HIDDEN, height=185)
+    backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=150)
     status_timer_ref = [None]
     copy_timer_ref = [None]
 
@@ -999,6 +1039,10 @@ def main(page: ft.Page):
         )
     )
 
+    def close_bkp_modal(e=None):
+        bkp_dlg.visible = False
+        refresh_ui(bkp_dlg)
+
     def show_dialog_status(msg: str, is_error=False):
         if status_timer_ref[0] is not None:
             try:
@@ -1038,7 +1082,7 @@ def main(page: ft.Page):
                     bgcolor=SURFACE_LATTE,
                     border_radius=12,
                     border=ft.border.all(1, BORDER_SAND),
-                    padding=22,
+                    padding=20,
                     alignment=ft.alignment.center,
                     content=ft.Column(
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1061,7 +1105,7 @@ def main(page: ft.Page):
                     def do_restore():
                         ok, msg = restore_db_from_file(path)
                         if ok:
-                            close_ctrl(bkp_dlg)
+                            close_bkp_modal()
                             refresh_all_views()
                             show_snackbar(f"اطلاعات به بکاپ ({dt_str}) بازگردانی شد.", MOCHA_PRIMARY)
                         else:
@@ -1077,16 +1121,22 @@ def main(page: ft.Page):
 
                 def ask_delete_bkp(e, path=b_path, name=b_name):
                     def do_del():
-                        try:
-                            if os.path.exists(path):
-                                os.remove(path)
-                            inner_path = os.path.join(INTERNAL_BACKUP_DIR, name)
-                            if os.path.exists(inner_path):
-                                os.remove(inner_path)
-                            render_backups_list()
-                            show_dialog_status("فایل بکاپ با موفقیت حذف شد 🗑", is_error=True)
-                        except Exception:
-                            pass
+                        paths_to_remove = {
+                            path,
+                            os.path.join(INTERNAL_BACKUP_DIR, name),
+                        }
+                        for pub_dir in get_public_download_dirs():
+                            paths_to_remove.add(os.path.join(pub_dir, name))
+
+                        for p in paths_to_remove:
+                            try:
+                                if p and os.path.exists(p):
+                                    os.remove(p)
+                            except Exception:
+                                pass
+
+                        render_backups_list()
+                        show_dialog_status("فایل بکاپ با موفقیت حذف شد 🗑", is_error=True)
 
                     show_confirm_dialog(
                         "حذف فایل بکاپ",
@@ -1217,7 +1267,7 @@ def main(page: ft.Page):
             ok, msg = restore_db_from_text_code(code_val)
             if ok:
                 backup_code_field.value = ""
-                close_ctrl(bkp_dlg)
+                close_bkp_modal()
                 refresh_all_views()
                 show_snackbar("اطلاعات با موفقیت از کد متنی بازیابی شد!", MOCHA_PRIMARY)
             else:
@@ -1231,103 +1281,124 @@ def main(page: ft.Page):
             confirm_color=MOCHA_PRIMARY
         )
 
-    bkp_dlg = ft.AlertDialog(
-        modal=True,
-        rtl=True,
-        on_dismiss=lambda e: setattr(bkp_dlg, "open", False),
-        shape=ft.RoundedRectangleBorder(radius=20),
+    bkp_card_box = ft.Container(
+        top=46,
+        left=20,
+        right=20,
         bgcolor=CARD_IVORY,
-        surface_tint_color=CARD_IVORY,
-        title=ft.Row(
+        border_radius=20,
+        padding=ft.padding.only(top=16, left=16, right=16, bottom=10),
+        shadow=ft.BoxShadow(
+            blur_radius=24,
+            color=ft.colors.with_opacity(0.28, "#000000"),
+            offset=ft.Offset(0, 8),
+        ),
+        on_click=lambda e: None,
+        rtl=True,
+        content=ft.Column(
             rtl=True,
-            alignment=ft.MainAxisAlignment.START,
             spacing=8,
+            tight=True,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
-                ft.Container(
-                    content=ft.Icon(ft.icons.CLOUD_SYNC_ROUNDED, color=MOCHA_PRIMARY, size=20),
-                    bgcolor=CHIP_LATTE,
-                    padding=7,
-                    border_radius=10,
+                ft.Row(
+                    rtl=True,
+                    alignment=ft.MainAxisAlignment.START,
+                    spacing=8,
+                    controls=[
+                        ft.Container(
+                            content=ft.Icon(ft.icons.CLOUD_SYNC_ROUNDED, color=MOCHA_PRIMARY, size=20),
+                            bgcolor=CHIP_LATTE,
+                            padding=7,
+                            border_radius=10,
+                        ),
+                        ft.Text("مرکز بکاپ و بازیابی اطلاعات", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                    ]
                 ),
-                ft.Text("مرکز بکاپ و بازیابی اطلاعات", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
-            ]
-        ),
-        content=ft.Container(
-            width=335,
-            rtl=True,
-            content=ft.Column(
-                rtl=True,
-                spacing=8,
-                tight=True,
-                horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                controls=[
-                    ft.Row(
-                        rtl=True,
-                        controls=[
-                            ft.ElevatedButton(
-                                "ثبت بکاپ جدید (در برنامه + پوشه دانلود)",
-                                icon=ft.icons.ADD_TASK_ROUNDED,
-                                bgcolor=MOCHA_PRIMARY,
-                                color=ft.colors.WHITE,
-                                height=42,
-                                expand=True,
-                                rtl=True,
-                                style=ft.ButtonStyle(
-                                    shape=ft.RoundedRectangleBorder(radius=11),
-                                    text_style=ft.TextStyle(size=11, font_family="Vazir-Bold")
-                                ),
-                                on_click=create_new_backup_click
-                            )
-                        ]
-                    ),
-                    status_banner,
-                    ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color=ESPRESSO_DARK),
-                    backups_list_col,
-                    ft.Container(height=1, bgcolor=BORDER_SAND, margin=ft.padding.symmetric(vertical=2)),
-                    ft.Text("پشتیبان‌گیری متنی (مخصوص تلگرام و انتقال):", size=10, font_family="Vazir-Bold", color=MOCHA_PRIMARY),
-                    ft.Row(rtl=True, controls=[backup_code_field]),
-                    ft.Row(
-                        rtl=True,
-                        spacing=8,
-                        controls=[
-                            copy_btn,
-                            ft.ElevatedButton(
-                                "بازگردانی از کد",
-                                icon=ft.icons.DOWNLOAD_DONE_ROUNDED,
-                                bgcolor=MOCHA_PRIMARY,
-                                color=ft.colors.WHITE,
-                                elevation=0,
-                                expand=1,
-                                height=38,
-                                rtl=True,
-                                style=ft.ButtonStyle(
-                                    shape=ft.RoundedRectangleBorder(radius=10),
-                                    text_style=ft.TextStyle(size=10, font_family="Vazir-Bold")
-                                ),
-                                on_click=restore_from_code_click
+                ft.Row(
+                    rtl=True,
+                    controls=[
+                        ft.ElevatedButton(
+                            "ثبت بکاپ جدید (در برنامه + پوشه دانلود)",
+                            icon=ft.icons.ADD_TASK_ROUNDED,
+                            bgcolor=MOCHA_PRIMARY,
+                            color=ft.colors.WHITE,
+                            height=42,
+                            expand=True,
+                            rtl=True,
+                            style=ft.ButtonStyle(
+                                shape=ft.RoundedRectangleBorder(radius=11),
+                                text_style=ft.TextStyle(size=11, font_family="Vazir-Bold")
                             ),
-                        ]
-                    ),
-                ]
-            )
-        ),
-        actions=[
-            ft.Container(
-                rtl=True,
-                content=ft.Row(
+                            on_click=create_new_backup_click
+                        )
+                    ]
+                ),
+                status_banner,
+                ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                backups_list_col,
+                ft.Container(height=1, bgcolor=BORDER_SAND, margin=ft.padding.symmetric(vertical=2)),
+                ft.Text("پشتیبان‌گیری متنی: ", size=10, font_family="Vazir-Bold", color=MOCHA_PRIMARY),
+                ft.Row(rtl=True, controls=[backup_code_field]),
+                ft.Row(
+                    rtl=True,
+                    spacing=8,
+                    controls=[
+                        copy_btn,
+                        ft.ElevatedButton(
+                            "بازگردانی از کد",
+                            icon=ft.icons.DOWNLOAD_DONE_ROUNDED,
+                            bgcolor=MOCHA_PRIMARY,
+                            color=ft.colors.WHITE,
+                            elevation=0,
+                            expand=1,
+                            height=38,
+                            rtl=True,
+                            style=ft.ButtonStyle(
+                                shape=ft.RoundedRectangleBorder(radius=10),
+                                text_style=ft.TextStyle(size=10, font_family="Vazir-Bold")
+                            ),
+                            on_click=restore_from_code_click
+                        ),
+                    ]
+                ),
+                ft.Row(
                     rtl=True,
                     alignment=ft.MainAxisAlignment.END,
                     controls=[
                         ft.TextButton(
                             "بستن پنجره",
                             style=ft.ButtonStyle(color=ESPRESSO_DARK),
-                            on_click=lambda e: close_ctrl(bkp_dlg)
+                            on_click=close_bkp_modal
                         )
                     ]
-                )
-            )
-        ],
+                ),
+            ]
+        )
     )
+
+    bkp_dlg = ft.Stack(
+        visible=False,
+        top=0,
+        bottom=0,
+        left=0,
+        right=0,
+        controls=[
+            ft.Container(
+                top=0,
+                bottom=0,
+                left=0,
+                right=0,
+                bgcolor=ft.colors.with_opacity(0.52, "#000000"),
+                on_click=close_bkp_modal,
+            ),
+            bkp_card_box,
+        ]
+    )
+    try:
+        bkp_dlg.clip_behavior = ft.ClipBehavior.NONE
+    except Exception:
+        pass
 
     def open_backup_manager_dialog(e):
         if status_timer_ref[0] is not None:
@@ -1342,8 +1413,12 @@ def main(page: ft.Page):
         copy_btn.icon = ft.icons.CONTENT_COPY_ROUNDED
         copy_btn.bgcolor = CHIP_LATTE
         copy_btn.color = ESPRESSO_DARK
+        if bkp_dlg not in page.overlay:
+            page.overlay.append(bkp_dlg)
         render_backups_list()
-        open_ctrl(bkp_dlg)
+        bkp_dlg.visible = True
+        refresh_ui(bkp_dlg)
+    # ------------------ پایان کدهایی که باید جایگزین کنی ------------------
 
     # --- هدر بالای برنامه ---
     today_jy, today_jm, today_jd = gregorian_to_jalali(now_dt.year, now_dt.month, now_dt.day)
@@ -2078,7 +2153,7 @@ def main(page: ft.Page):
     # --- پایان منوی کشویی ---
 
     new_cat_input = ft.TextField(
-        label="نام دسته‌بندی جدید (مثلاً: ماکتیل‌ها)",
+        label="نام دسته‌بندی جدید",
         text_size=12, height=44, border_radius=10, border_color=BORDER_WARM,
         focused_border_color=MOCHA_PRIMARY, bgcolor=SURFACE_LATTE, autofocus=True, rtl=True, text_align=ft.TextAlign.RIGHT,
     )
@@ -2216,9 +2291,15 @@ def main(page: ft.Page):
         page.update()
 
     cost_input = ft.TextField(
-        label="قیمت پایه (هزینه)", height=44, text_size=12, keyboard_type=ft.KeyboardType.NUMBER,
-        content_padding=ft.padding.symmetric(horizontal=12, vertical=8), border_radius=10,
-        border_color=BORDER_WARM, focused_border_color=COST_RED_MAIN, bgcolor=SURFACE_LATTE,
+        label="قیمت پایه (هزینه)",
+        height=44,
+        text_size=12,
+        keyboard_type=ft.KeyboardType.NUMBER,
+        content_padding=ft.padding.symmetric(horizontal=12, vertical=8),
+        border_radius=10,
+        border_color=BORDER_WARM,
+        focused_border_color=MOCHA_PRIMARY,  # تغییر از COST_RED_MAIN به MOCHA_PRIMARY
+        bgcolor=SURFACE_LATTE,
         on_change=on_cost_price_change
     )
 

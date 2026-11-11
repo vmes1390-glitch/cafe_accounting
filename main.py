@@ -823,15 +823,14 @@ def main(page: ft.Page):
     if hasattr(ft, "Clipboard"):
         try:
             _clipboard_service = ft.Clipboard()
-            if hasattr(page, "services") and isinstance(page.services, list):
+            if hasattr(page, "services"):
                 page.services.append(_clipboard_service)
-            elif hasattr(page, "overlay") and isinstance(page.overlay, list):
-                page.overlay.append(_clipboard_service)
         except Exception:
             pass
 
-    def copy_to_clipboard(text_val: str) -> bool:
-        if os.name == "nt":
+    async def copy_to_clipboard_async(text_val: str):
+        # ۱. کپی در ویندوز (حالت دسکتاپ)
+        if os.name == "nt" and not getattr(page, "web", False):
             try:
                 import subprocess
                 subprocess.run(
@@ -843,41 +842,46 @@ def main(page: ft.Page):
             except Exception:
                 pass
 
-        async def _async_clip():
-            targets = []
-            if _clipboard_service is not None:
-                targets.append(_clipboard_service)
-            p_clip = getattr(page, "clipboard", None)
-            if p_clip is not None and not isinstance(p_clip, str):
-                targets.append(p_clip)
-            targets.append(page)
-
-            for target in targets:
-                for m_name in ("set", "set_data", "set_clipboard", "set_text"):
-                    fn = getattr(target, m_name, None)
-                    if callable(fn):
-                        try:
-                            res = fn(text_val)
-                            if inspect.iscoroutine(res):
-                                await res
-                            return
-                        except Exception:
-                            continue
-
-        if hasattr(page, "run_task"):
+        # ۲. کپی در اندروید و فلت ۱.۰ از طریق سرویس کلیپ‌بورد (بدون ورود به overlay)
+        if _clipboard_service is not None:
             try:
-                page.run_task(_async_clip)
-                return True
+                if hasattr(page, "services") and _clipboard_service not in page.services:
+                    page.services.append(_clipboard_service)
+                    page.update()
+                res = _clipboard_service.set(text_val)
+                if inspect.iscoroutine(res):
+                    await res
+                return
             except Exception:
                 pass
 
-        try:
-            if hasattr(page, "set_clipboard"):
-                page.set_clipboard(text_val)
-                return True
-        except Exception:
-            pass
-        return os.name == "nt"
+        # ۳. پشتیبانی از نسخه‌های قدیمی‌تر فلت
+        if hasattr(page, "set_clipboard"):
+            try:
+                res = page.set_clipboard(text_val)
+                if inspect.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
+
+        targets = []
+        if _clipboard_service is not None:
+            targets.append(_clipboard_service)
+        p_clip = getattr(page, "clipboard", None)
+        if p_clip is not None and not isinstance(p_clip, str):
+            targets.append(p_clip)
+        targets.append(page)
+
+        for target in targets:
+            for m_name in ("set", "set_data", "set_clipboard", "set_text"):
+                fn = getattr(target, m_name, None)
+                if callable(fn):
+                    try:
+                        res = fn(text_val)
+                        if inspect.iscoroutine(res):
+                            await res
+                    except Exception:
+                        continue
 
     # --- دیالوگ تایید یکتا ---
     confirm_action_ref = [None]
@@ -988,13 +992,13 @@ def main(page: ft.Page):
     # =========================================================================
     # مرکز بکاپ و بازیابی اطلاعات (کارت ثابت ضدبه‌هم‌ریختگی کیبورد)
     # =========================================================================
-    backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=150)
+    backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=120)
     status_timer_ref = [None]
     copy_timer_ref = [None]
 
     backup_code_field = ft.TextField(
         label="کد پشتیبان (برای بازیابی، کد را اینجا پیست کنید)",
-        hint_text="VITA_BKP_V1:...",
+        hint_text="...",
         text_size=11,
         height=44,
         expand=True,
@@ -1082,13 +1086,13 @@ def main(page: ft.Page):
                     bgcolor=SURFACE_LATTE,
                     border_radius=12,
                     border=ft.border.all(1, BORDER_SAND),
-                    padding=20,
+                    padding=16,
                     alignment=ft.alignment.center,
                     content=ft.Column(
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         spacing=6,
                         controls=[
-                            ft.Icon(ft.icons.FOLDER_OFF_OUTLINED, size=26, color=TEXT_MUTED),
+                            ft.Icon(ft.icons.FOLDER_OFF_OUTLINED, size=24, color=TEXT_MUTED),
                             ft.Text("هنوز هیچ بکاپی ثبت نشده است.", size=11, color=TEXT_MUTED, font_family="Vazir-Bold"),
                         ]
                     )
@@ -1225,10 +1229,10 @@ def main(page: ft.Page):
         else:
             show_dialog_status(f"خطا: {res}", is_error=True)
 
-    def generate_and_copy_code_click(e):
+    async def generate_and_copy_code_click(e):
         ok, code_or_err = export_db_to_text_code()
         if ok:
-            copy_to_clipboard(code_or_err)
+            await copy_to_clipboard_async(code_or_err)
             if copy_timer_ref[0] is not None:
                 try:
                     copy_timer_ref[0].cancel()
@@ -1282,12 +1286,12 @@ def main(page: ft.Page):
         )
 
     bkp_card_box = ft.Container(
-        top=46,
+        top=30,
         left=20,
         right=20,
         bgcolor=CARD_IVORY,
         border_radius=20,
-        padding=ft.padding.only(top=16, left=16, right=16, bottom=10),
+        padding=ft.padding.only(top=14, left=16, right=16, bottom=8),
         shadow=ft.BoxShadow(
             blur_radius=24,
             color=ft.colors.with_opacity(0.28, "#000000"),
@@ -1297,7 +1301,7 @@ def main(page: ft.Page):
         rtl=True,
         content=ft.Column(
             rtl=True,
-            spacing=8,
+            spacing=6,
             tight=True,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             controls=[
@@ -1323,7 +1327,7 @@ def main(page: ft.Page):
                             icon=ft.icons.ADD_TASK_ROUNDED,
                             bgcolor=MOCHA_PRIMARY,
                             color=ft.colors.WHITE,
-                            height=42,
+                            height=40,
                             expand=True,
                             rtl=True,
                             style=ft.ButtonStyle(
@@ -1338,7 +1342,7 @@ def main(page: ft.Page):
                 ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                 backups_list_col,
                 ft.Container(height=1, bgcolor=BORDER_SAND, margin=ft.padding.symmetric(vertical=2)),
-                ft.Text("پشتیبان‌گیری متنی: ", size=10, font_family="Vazir-Bold", color=MOCHA_PRIMARY),
+                ft.Text("پشتیبان‌گیری متنی:", size=10, font_family="Vazir-Bold", color=MOCHA_PRIMARY),
                 ft.Row(rtl=True, controls=[backup_code_field]),
                 ft.Row(
                     rtl=True,
@@ -2334,7 +2338,7 @@ def main(page: ft.Page):
     )
 
 
-    menu_products_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
+    menu_products_col = ft.Column(spacing=8)
     menu_count_badge = ft.Text("0 محصول", size=11, font_family="Vazir-Bold", color=MOCHA_PRIMARY)
     # اینجا کل محتوای فرم جمع آوری شده است
     add_form_content = ft.Column(
@@ -2685,6 +2689,7 @@ def main(page: ft.Page):
         content=ft.Column(
             spacing=10,
             expand=True,
+            scroll=ft.ScrollMode.AUTO,  # جلوگیری از تداخل اجزا هنگام باز شدن کیبورد
             controls=[
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,

@@ -203,6 +203,7 @@ DEFAULT_CATEGORIES = [
     "نوشیدنی‌های گرم بر پایۀ قهوه",
     "نوشیدنی‌های سرد بر پایۀ قهوه",
     "شیک‌ها",
+    "ماکتل‌ها",          # <--- این مورد را اینجا اضافه کنید
     "بستنی بار",
     "نوشیدنی‌های گرم",
     "چای‌ها",
@@ -1609,11 +1610,13 @@ def main(page: ft.Page):
             "نوشیدنی‌های گرم بر پایۀ قهوه": (ft.icons.LOCAL_CAFE_ROUNDED, "#9A5B13", "#FEF3C7", "#FDE68A"),
             "نوشیدنی‌های سرد بر پایۀ قهوه": (ft.icons.AC_UNIT_ROUNDED, "#0369A1", "#E0F2FE", "#BAE6FD"),
             "شیک‌ها": (ft.icons.BLENDER_ROUNDED, "#6D28D9", "#EDE9FE", "#DDD6FE"),
+            "ماکتل‌ها": (ft.icons.LOCAL_BAR_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD"),
             "بستنی بار": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
             "بستنی بارها": (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8"),
             "نوشیدنی‌های گرم": (ft.icons.LOCAL_DRINK_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA"),
             "چای‌ها": (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0"),
             "کیک و دسر": (ft.icons.COOKIE_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A"),
+            
         }
         if cat in styles:
             return styles[cat]
@@ -1621,11 +1624,11 @@ def main(page: ft.Page):
         if any(w in cat for w in ("کیک", "دسر", "شیرینی", "کوکی", "کروسان", "وافل", "پنکیک")):
             return (ft.icons.BAKERY_DINING_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A")
         if any(w in cat for w in ("سرد", "آیس", "فراپه", "ماکتیل", "اسموتی", "آب‌میوه")):
-            return (ft.icons.LOCAL_BAR_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD")
+            return (ft.icons.LOCAL_DRINK_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD")
         if any(w in cat for w in ("چای", "دمنوش", "گیاهی")):
             return (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0")
         if any(w in cat for w in ("قهوه", "اسپرسو", "دمی", "ترک")):
-            return (ft.icons.COFFEE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5")
+            return (ft.icons.LOCAL_CAFE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5")
         if any(w in cat for w in ("غذا", "صبحانه", "اسنک", "پنینی", "پاستا", "ساندویچ", "تست")):
             return (ft.icons.RESTAURANT_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA")
         if any(w in cat for w in ("بستنی", "شیک")):

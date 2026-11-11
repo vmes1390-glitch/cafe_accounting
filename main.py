@@ -611,7 +611,7 @@ def main(page: ft.Page):
     COST_RED_SURFACE = "#FEF2F2"
     COST_RED_BORDER = "#FECACA"
 
-    app_title = "حسابداری و صندوق کافه"
+    app_title = "حسابداری کافه"
     page.title = app_title
     page.rtl = True
     page.theme_mode = ft.ThemeMode.LIGHT
@@ -1475,7 +1475,7 @@ def main(page: ft.Page):
                             spacing=2,
                             controls=[
                                 ft.Text("ویتا حساب", size=14, font_family="Vazir-Bold", color="#FFFDF9"),
-                                ft.Text("صندوق فروش و حسابداری کافه", size=9, color="#F6EFE6"),
+                                ft.Text("حسابداری کافه", size=9, color="#F6EFE6"),
                             ]
                         )
                     ]
@@ -1994,6 +1994,7 @@ def main(page: ft.Page):
     )
 
     # --- ساخت منوی کشویی آکاردئونی (شناور روی فرم) ---
+    # --- ساخت منوی کشویی آکاردئونی (شناور روی فرم) ---
     form_category_value = [""]
     form_category_label = ft.Text(
         "انتخاب دسته‌بندی...",
@@ -2011,7 +2012,7 @@ def main(page: ft.Page):
         horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
     )
 
-    # این کانتینر حالا دارای مختصات مطلق است تا روی اجزای دیگر شناور شود
+    # عرض پایه روی 174 تنظیم شد تا دقیقا هم‌عرض کادر دسته‌بندی باشد
     custom_dropdown_list_container = ft.Container(
         visible=False,
         bgcolor=CARD_IVORY,
@@ -2019,9 +2020,9 @@ def main(page: ft.Page):
         border_radius=ft.border_radius.only(bottom_left=10, bottom_right=10),
         padding=ft.padding.all(5),
         height=190,
-        width=182,  # عرض دقیق برابر با خود کادر دسته‌بندی
-        top=43,     # قرارگیری دقیقاً زیر کادر (بدون هل دادن بقیه اجزا)
-        left=0,     # چسبیده به سمت فیزیکی چپ
+        width=174,  # هماهنگ دقیق با عرض کادر
+        top=43,
+        left=0,
         shadow=ft.BoxShadow(
             blur_radius=12,
             color=ft.colors.with_opacity(0.15, MOCHA_PRIMARY),
@@ -2030,13 +2031,28 @@ def main(page: ft.Page):
         content=custom_dropdown_list
     )
 
+    def close_custom_dropdown(e=None):
+        if custom_dropdown_list_container.visible:
+            custom_dropdown_list_container.visible = False
+            dropdown_backdrop.visible = False
+            dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
+            custom_dropdown_box.border_radius = 10
+            refresh_ui(custom_dropdown_box, custom_dropdown_list_container, dropdown_backdrop)
+
+    # لایه لمسی شفاف برای تشخیص کلیک در بیرون کادر
+    dropdown_backdrop = ft.Container(
+        visible=False,
+        top=0,
+        bottom=0,
+        left=0,
+        right=0,
+        on_click=close_custom_dropdown,
+    )
+
     def select_custom_cat(cat_name):
         form_category_value[0] = cat_name
         form_category_label.value = cat_name
-        custom_dropdown_list_container.visible = False
-        dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
-        custom_dropdown_box.border_radius = 10
-        refresh_ui(custom_dropdown_box, custom_dropdown_list_container)
+        close_custom_dropdown()
 
     last_long_press_ts = [0.0]
 
@@ -2045,10 +2061,7 @@ def main(page: ft.Page):
         if now_t - last_long_press_ts[0] < 0.8:
             return
         last_long_press_ts[0] = now_t
-        custom_dropdown_list_container.visible = False
-        dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
-        custom_dropdown_box.border_radius = 10
-        refresh_ui(custom_dropdown_box, custom_dropdown_list_container)
+        close_custom_dropdown()
         ask_delete_category(cat_name)
 
     def refresh_custom_dropdown_list():
@@ -2101,17 +2114,24 @@ def main(page: ft.Page):
         )
         refresh_ui(custom_dropdown_list)
 
-    def toggle_custom_dropdown(e):
+    def toggle_custom_dropdown(e=None):
         is_open = custom_dropdown_list_container.visible
-        custom_dropdown_list_container.visible = not is_open
         if not is_open:
+            # محاسبه دقیق عرض کادر بر اساس عرض زنده پنجره/صفحه نمایش
+            page_w = page.width if (page.width and page.width > 0) else 419
+            calc_w = int((page_w - 71) / 2)
+            if calc_w > 100:
+                custom_dropdown_list_container.width = calc_w
+
+            custom_dropdown_list_container.visible = True
+            dropdown_backdrop.visible = True
             dropdown_arrow_icon.name = ft.icons.ARROW_DROP_UP_ROUNDED
-            refresh_custom_dropdown_list()
             custom_dropdown_box.border_radius = ft.border_radius.only(top_left=10, top_right=10)
+            refresh_custom_dropdown_list()
         else:
-            dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
-            custom_dropdown_box.border_radius = 10
-        refresh_ui(custom_dropdown_box, custom_dropdown_list_container)
+            close_custom_dropdown()
+            return
+        refresh_ui(custom_dropdown_box, custom_dropdown_list_container, dropdown_backdrop)
 
     custom_dropdown_box = ft.Container(
         height=44,
@@ -2146,11 +2166,8 @@ def main(page: ft.Page):
         elif form_category_value[0] not in cats:
             form_category_value[0] = cats[0] if cats else ""
         form_category_label.value = form_category_value[0]
-        custom_dropdown_list_container.visible = False
-        dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
-        custom_dropdown_box.border_radius = 10
+        close_custom_dropdown()
         refresh_ui(form_category_label, custom_dropdown_list_container, custom_dropdown_box)
-    # --- پایان منوی کشویی ---
 
     new_cat_input = ft.TextField(
         label="نام دسته‌بندی جدید",
@@ -2365,6 +2382,7 @@ def main(page: ft.Page):
     add_form_stack = ft.Stack(
         controls=[
             add_form_content,               # لایه پایینی (خود فرم)
+            dropdown_backdrop,
             custom_dropdown_list_container  # لایه بالایی (منوی کشویی که شناور شده)
         ]
     )
@@ -2663,6 +2681,7 @@ def main(page: ft.Page):
     menu_view = ft.Container(
         padding=16,
         expand=True,
+        on_click=lambda e: close_custom_dropdown(),
         content=ft.Column(
             spacing=10,
             expand=True,

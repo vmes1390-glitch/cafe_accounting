@@ -838,7 +838,7 @@ def main(page: ft.Page):
             right=0,
             bgcolor=ft.colors.with_opacity(0.55, "#000000"),
             alignment=ft.alignment.center,
-            padding=ft.padding.symmetric(horizontal=18, vertical=20),
+            padding=ft.padding.symmetric(horizontal=18, vertical=10),
             on_click=lambda e: None,
             content=card_ctrl,
         )
@@ -1534,11 +1534,58 @@ def main(page: ft.Page):
         on_click=restore_from_code_click
     )
 
+    bkp_close_btn = ft.Container(
+        height=34,
+        padding=ft.padding.symmetric(horizontal=12, vertical=4),
+        border_radius=10,
+        alignment=ft.alignment.center,
+        on_click=close_bkp_modal,
+        content=ft.Text("بستن پنجره", size=12, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+    )
+
+    bkp_inner_col = ft.Column(
+        rtl=True,
+        spacing=8,
+        tight=True,
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        controls=[
+            ft.Row(
+                rtl=True,
+                alignment=ft.MainAxisAlignment.START,
+                spacing=8,
+                controls=[
+                    bkp_header_icon_box,
+                    ft.Text("مرکز بکاپ و بازیابی اطلاعات", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                ]
+            ),
+            ft.Row(rtl=True, controls=[bkp_new_btn]),
+            status_banner,
+            ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+            backups_list_col,
+            ft.Container(height=1, bgcolor=BORDER_SAND, margin=ft.padding.symmetric(vertical=1)),
+            bkp_text_label,
+            ft.Row(rtl=True, controls=[backup_code_field]),
+            ft.Row(
+                rtl=True,
+                spacing=8,
+                controls=[
+                    copy_btn,
+                    bkp_restore_code_btn,
+                ]
+            ),
+            ft.Row(
+                rtl=True,
+                alignment=ft.MainAxisAlignment.END,
+                controls=[bkp_close_btn]
+            ),
+        ]
+    )
+
     bkp_card_box = ft.Container(
         width=375,
         bgcolor=CARD_IVORY,
         border_radius=20,
-        padding=ft.padding.only(top=16, left=16, right=16, bottom=10),
+        padding=ft.padding.symmetric(horizontal=16, vertical=12),
         shadow=ft.BoxShadow(
             blur_radius=24,
             color=ft.colors.with_opacity(0.28, "#000000"),
@@ -1546,50 +1593,31 @@ def main(page: ft.Page):
         ),
         on_click=lambda e: None,
         rtl=True,
-        content=ft.Column(
-            rtl=True,
-            spacing=8,
-            tight=True,
-            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-            controls=[
-                ft.Row(
-                    rtl=True,
-                    alignment=ft.MainAxisAlignment.START,
-                    spacing=8,
-                    controls=[
-                        bkp_header_icon_box,
-                        ft.Text("مرکز بکاپ و بازیابی اطلاعات", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
-                    ]
-                ),
-                ft.Row(rtl=True, controls=[bkp_new_btn]),
-                status_banner,
-                ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color=ESPRESSO_DARK),
-                backups_list_col,
-                ft.Container(height=1, bgcolor=BORDER_SAND, margin=ft.padding.symmetric(vertical=2)),
-                bkp_text_label,
-                ft.Row(rtl=True, controls=[backup_code_field]),
-                ft.Row(
-                    rtl=True,
-                    spacing=8,
-                    controls=[
-                        copy_btn,
-                        bkp_restore_code_btn,
-                    ]
-                ),
-                ft.Row(
-                    rtl=True,
-                    alignment=ft.MainAxisAlignment.END,
-                    controls=[
-                        ft.TextButton(
-                            "بستن پنجره",
-                            style=ft.ButtonStyle(color=ESPRESSO_DARK),
-                            on_click=close_bkp_modal
-                        )
-                    ]
-                ),
-            ]
-        )
+        content=bkp_inner_col,
     )
+
+    def _set_bkp_keyboard_mode(kb_open: bool):
+        backups_list_col.height = 68 if kb_open else 112
+        bkp_inner_col.spacing = 5 if kb_open else 8
+        bkp_card_box.padding = ft.padding.symmetric(horizontal=16, vertical=8 if kb_open else 12)
+        if getattr(bkp_dlg, "visible", False):
+            refresh_ui(backups_list_col, bkp_inner_col, bkp_card_box, bkp_dlg)
+
+    backup_code_field.on_focus = lambda e: _set_bkp_keyboard_mode(True)
+    backup_code_field.on_blur = lambda e: _set_bkp_keyboard_mode(False)
+
+    def _on_page_resize(e):
+        if getattr(bkp_dlg, "visible", False) and page.height:
+            _set_bkp_keyboard_mode(page.height < 560)
+
+    try:
+        page.on_resized = _on_page_resize
+    except Exception:
+        pass
+    try:
+        page.on_resize = _on_page_resize
+    except Exception:
+        pass
 
     bkp_dlg = make_centered_modal(bkp_card_box)
 
@@ -1606,6 +1634,7 @@ def main(page: ft.Page):
         copy_btn.icon = ft.icons.CONTENT_COPY_ROUNDED
         copy_btn.bgcolor = CHIP_LATTE
         copy_btn.color = ESPRESSO_DARK
+        _set_bkp_keyboard_mode(False)
         render_backups_list()
         open_ctrl(bkp_dlg)
 

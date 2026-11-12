@@ -26,6 +26,7 @@ if hasattr(ft, "Icons"):
                 name.replace("_OUTLINE_", "_"),
                 name.replace("_OUTLINED", ""),
                 name.replace("_ROUNDED", ""),
+                "RESTAURANT",
                 "CIRCLE",
             ):
                 if hasattr(ft.Icons, fb):
@@ -77,7 +78,7 @@ class _CompatBorder:
         if hasattr(ft, "Border"):
             if hasattr(ft.Border, "all"):
                 return ft.Border.all(width, color)
-            if hasattr(ft, "BorderSide"):
+            if hasattr(ft.Border, "BorderSide") or hasattr(ft, "BorderSide"):
                 side = ft.BorderSide(width, color)
                 return ft.Border(top=side, bottom=side, left=side, right=side)
         return None
@@ -138,15 +139,25 @@ if hasattr(ft, "DropdownOption"):
     elif not hasattr(ft.dropdown, "Option"):
         ft.dropdown.Option = ft.DropdownOption
 
+# سازگارکننده ویژه Icon برای فلت 1.0+ (پشتیبانی همزمان از .name و .icon)
+if hasattr(ft, "Icon") and not hasattr(ft.Icon, "name"):
+    try:
+        ft.Icon.name = property(
+            lambda self: getattr(self, "icon", None),
+            lambda self, val: setattr(self, "icon", val),
+        )
+    except Exception:
+        pass
+
 for _ctrl_name in (
     "Button", "ElevatedButton", "FilledButton", "OutlinedButton", "TextButton",
     "IconButton", "TextField", "Dropdown", "Container", "GestureDetector",
     "AlertDialog", "SnackBar", "NavigationBar", "NavigationBarDestination",
-    "ButtonStyle", "TextStyle", "BoxShadow", "Theme",
+    "ButtonStyle", "TextStyle", "BoxShadow", "Theme", "Icon",
 ):
     _cls = getattr(ft, _ctrl_name, None)
     if _cls is not None and not getattr(_cls, "_compat_patched", False):
-        if not hasattr(_cls, "text"):
+        if _ctrl_name != "Icon" and not hasattr(_cls, "text"):
             try:
                 _cls.text = property(
                     lambda self: getattr(self, "content", None),
@@ -168,6 +179,8 @@ for _ctrl_name in (
                                 bad_key = m.group(1)
                                 if bad_key == "text" and "content" not in kw and not a:
                                     kw["content"] = kw.pop("text")
+                                elif bad_key == "name" and "icon" not in kw and not a:
+                                    kw["icon"] = kw.pop("name")
                                 elif bad_key == "on_long_press" and "on_long_press_start" not in kw and "lp1" not in tried_swaps:
                                     tried_swaps.add("lp1")
                                     kw["on_long_press_start"] = kw.pop("on_long_press")
@@ -206,6 +219,7 @@ DB_NAME = os.path.join(APP_STORAGE_DIR, "cafe_accounting.db")
 INTERNAL_BACKUP_DIR = os.path.join(APP_STORAGE_DIR, "backups")
 BACKUP_CODE_PREFIX = "VITA_BKP_V1:"
 
+# دسته‌بندی‌های پیش‌فرض کافه (کاملاً دست‌نخورده)
 DEFAULT_CATEGORIES = [
     "قهوه‌ها",
     "نوشیدنی‌های گرم بر پایۀ قهوه",
@@ -219,18 +233,59 @@ DEFAULT_CATEGORIES = [
     "کیک و دسر",
 ]
 
+# دسته‌بندی‌های پیش‌فرض و استاندارد رستوران
+DEFAULT_RESTAURANT_CATEGORIES = [
+    "کباب و گریل",
+    "خورشت و غذای سنتی",
+    "پیتزا",
+    "برگر و ساندویچ",
+    "پاستا و استیک",
+    "سوخاری و فینگر فود",
+    "پیش‌غذا و سوپ",
+    "سالاد و مخلفات",
+    "صبحانه و برانچ",
+    "نوشیدنی سرد",
+]
+
 ADD_CAT_OPTION = "+ افزودن دسته‌بندی جدید"
 
-def get_all_categories():
+def get_all_categories(section="cafe"):
+    default_list = DEFAULT_CATEGORIES if section == "cafe" else DEFAULT_RESTAURANT_CATEGORIES
     try:
         conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
-        cur.execute("SELECT name FROM categories ORDER BY id ASC")
+        cur.execute("SELECT name FROM categories WHERE section = ? ORDER BY id ASC", (section,))
         rows = [r[0] for r in cur.fetchall()]
         conn.close()
-        return rows if rows else list(DEFAULT_CATEGORIES)
+        return rows if rows else list(default_list)
     except Exception:
-        return list(DEFAULT_CATEGORIES)
+        return list(default_list)
+
+def get_app_mode() -> str:
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM app_settings WHERE key = 'app_mode'")
+        row = cur.fetchone()
+        conn.close()
+        if row and row[0] in ("cafe", "restaurant", "both"):
+            return row[0]
+    except Exception:
+        pass
+    return "cafe"
+
+def set_app_mode_db(mode_val: str):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('app_mode', ?)",
+            (mode_val,)
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 JALALI_MONTHS = [
     "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
@@ -347,6 +402,15 @@ def format_jalali_datetime(dt_str: str) -> str:
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('app_mode', 'cafe')")
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -354,12 +418,18 @@ def init_db():
             category TEXT NOT NULL,
             cost_price REAL NOT NULL,
             sell_price REAL NOT NULL,
-            sort_index INTEGER DEFAULT 0
+            sort_index INTEGER DEFAULT 0,
+            section TEXT DEFAULT 'cafe'
         )
     """)
     try:
         cursor.execute("ALTER TABLE products ADD COLUMN sort_index INTEGER DEFAULT 0")
         cursor.execute("UPDATE products SET sort_index = id")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE products ADD COLUMN section TEXT DEFAULT 'cafe'")
+        cursor.execute("UPDATE products SET section = 'cafe' WHERE section IS NULL")
     except Exception:
         pass
 
@@ -369,20 +439,49 @@ def init_db():
             product_name TEXT NOT NULL,
             sell_price REAL NOT NULL,
             profit REAL NOT NULL,
-            order_date TEXT NOT NULL
+            order_date TEXT NOT NULL,
+            section TEXT DEFAULT 'cafe'
         )
     """)
+    try:
+        cursor.execute("ALTER TABLE orders ADD COLUMN section TEXT DEFAULT 'cafe'")
+        cursor.execute("UPDATE orders SET section = 'cafe' WHERE section IS NULL")
+    except Exception:
+        pass
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL
+            name TEXT NOT NULL,
+            section TEXT NOT NULL DEFAULT 'cafe',
+            UNIQUE(name, section)
         )
     """)
-    cursor.execute("SELECT COUNT(*) FROM categories")
+
+    cursor.execute("PRAGMA table_info(categories)")
+    cat_cols = [col[1] for col in cursor.fetchall()]
+    if "section" not in cat_cols:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS categories_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                section TEXT NOT NULL DEFAULT 'cafe',
+                UNIQUE(name, section)
+            )
+        """)
+        cursor.execute("INSERT OR IGNORE INTO categories_new (id, name, section) SELECT id, name, 'cafe' FROM categories")
+        cursor.execute("DROP TABLE categories")
+        cursor.execute("ALTER TABLE categories_new RENAME TO categories")
+
+    cursor.execute("SELECT COUNT(*) FROM categories WHERE section = 'cafe'")
     if cursor.fetchone()[0] == 0:
         for cat in DEFAULT_CATEGORIES:
-            cursor.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (cat,))
+            cursor.execute("INSERT OR IGNORE INTO categories (name, section) VALUES (?, 'cafe')", (cat,))
+
+    cursor.execute("SELECT COUNT(*) FROM categories WHERE section = 'restaurant'")
+    if cursor.fetchone()[0] == 0:
+        for cat in DEFAULT_RESTAURANT_CATEGORIES:
+            cursor.execute("INSERT OR IGNORE INTO categories (name, section) VALUES (?, 'restaurant')", (cat,))
 
     conn.commit()
     conn.close()
@@ -591,20 +690,66 @@ def main(page: ft.Page):
     init_db()
 
     # =========================================================================
-    # پالت رنگی روشن، دلباز و گرم (کرم وانیلی، شیرقهوه، کارامل و لاته روشن)
+    # پالت‌های رنگی کافه (کرم و کاراملی)، رستوران (زعفرانی و سفالی) و حالت ترکیبی
     # =========================================================================
-    BG_CREAM = "#F6EFE6"           # پس‌زمینه اصلی: کرم وانیلی بسیار روشن و دلباز
-    CARD_IVORY = "#FFFDF9"         # کارت‌ها: سفیدِ کرمی گرم و درخشان
-    SURFACE_LATTE = "#EFE5D8"      # کادرهای ورودی و سطوح داخلی: کرم لاته روشن
-    CHIP_LATTE = "#E5D3BE"         # پس‌زمینه دکمه‌های کمکی و بج‌ها: بیسکوئیتی روشن
-    BORDER_SAND = "#E4D5C3"        # خطوط دور کارت‌ها: شنی ملایم
-    BORDER_WARM = "#D4C0A8"        # خطوط دور اینپوت‌ها و چیپ‌ها
-    ESPRESSO_DARK = "#4A2E1B"      # متن‌های اصلی: قهوه‌ای برشته گرم
-    MOCHA_PRIMARY = "#9C623E"      # رنگ اصلی برند و دکمه‌ها: قهوه‌ای روشن کاراملی / دارچینی
-    CARAMEL_ACCENT = "#C27D48"     # رنگ مکمل: کاراملی طلایی روشن
-    TEXT_MUTED = "#846752"         # متن‌های فرعی: قهوه‌ای شیری ملایم
-    DISABLED_BG = "#E6D8C8"        # پس‌زمینه دکمه غیرفعال: کرم بیسکوئیتی
-    DISABLED_TEXT = "#A68E77"      # متن دکمه غیرفعال
+    BOTH_BLEND_MAIN = "#A8542F"   # رنگ میانه متعادل بین کرمی/موکای کافه (#9C623E) و نارنجی رستوران (#B54826)
+    BOTH_BLEND_BG = "#FAE6D4"     # پس‌زمینه کرم-کهربایی ملایم مابین کافه و رستوران
+    BOTH_BLEND_BORDER = "#E5BFA1" # حاشیه گرم میانه
+
+    THEMES = {
+        "cafe": {
+            "BG_CREAM": "#F6EFE6",
+            "CARD_IVORY": "#FFFDF9",
+            "SURFACE_LATTE": "#EFE5D8",
+            "CHIP_LATTE": "#E5D3BE",
+            "BORDER_SAND": "#E4D5C3",
+            "BORDER_WARM": "#D4C0A8",
+            "ESPRESSO_DARK": "#4A2E1B",
+            "MOCHA_PRIMARY": "#9C623E",
+            "CARAMEL_ACCENT": "#C27D48",
+            "TEXT_MUTED": "#846752",
+            "DISABLED_BG": "#E6D8C8",
+            "DISABLED_TEXT": "#A68E77",
+            "HEADER_GRAD": ["#8A5434", "#A66B46", "#C2845B"],
+            "HEADER_SHADOW": "#8A5434",
+            "HEADER_ICON": ft.icons.COFFEE_ROUNDED,
+        },
+        "restaurant": {
+            "BG_CREAM": "#F8EFE6",
+            "CARD_IVORY": "#FFFDF9",
+            "SURFACE_LATTE": "#F2E3D5",
+            "CHIP_LATTE": "#E8CEB8",
+            "BORDER_SAND": "#E6CFC0",
+            "BORDER_WARM": "#D9B9A3",
+            "ESPRESSO_DARK": "#452115",
+            "MOCHA_PRIMARY": "#B54826",
+            "CARAMEL_ACCENT": "#D97724",
+            "TEXT_MUTED": "#875F4A",
+            "DISABLED_BG": "#EBD8C8",
+            "DISABLED_TEXT": "#A88976",
+            "HEADER_GRAD": ["#8F3216", "#B54826", "#D97724"],
+            "HEADER_SHADOW": "#8F3216",
+            "HEADER_ICON": ft.icons.RESTAURANT_ROUNDED,
+        }
+    }
+
+    app_mode = get_app_mode()  # 'cafe', 'restaurant', 'both'
+    active_section = "restaurant" if app_mode == "restaurant" else "cafe"
+    dashboard_section_filter = "all" if app_mode == "both" else active_section
+
+    _initial_theme = THEMES[active_section]
+    BG_CREAM = _initial_theme["BG_CREAM"]
+    CARD_IVORY = _initial_theme["CARD_IVORY"]
+    SURFACE_LATTE = _initial_theme["SURFACE_LATTE"]
+    CHIP_LATTE = _initial_theme["CHIP_LATTE"]
+    BORDER_SAND = _initial_theme["BORDER_SAND"]
+    BORDER_WARM = _initial_theme["BORDER_WARM"]
+    ESPRESSO_DARK = _initial_theme["ESPRESSO_DARK"]
+    MOCHA_PRIMARY = _initial_theme["MOCHA_PRIMARY"]
+    CARAMEL_ACCENT = _initial_theme["CARAMEL_ACCENT"]
+    TEXT_MUTED = _initial_theme["TEXT_MUTED"]
+    DISABLED_BG = _initial_theme["DISABLED_BG"]
+    DISABLED_TEXT = _initial_theme["DISABLED_TEXT"]
 
     # رنگ‌های اختصاصی سود (سبز زمردی روشن و شاداب)
     PROFIT_DARK = "#047857"
@@ -669,6 +814,16 @@ def main(page: ft.Page):
         except Exception:
             pass
 
+    def set_icon_value(icon_ctrl, new_icon_val):
+        try:
+            icon_ctrl.icon = new_icon_val
+        except Exception:
+            pass
+        try:
+            icon_ctrl.name = new_icon_val
+        except Exception:
+            pass
+
     # =========================================================================
     # سیستم مدیریت متمرکز پنجره‌های رویی (وسط‌چین ۱۰۰٪ + قفل کامل دکمه‌های زیرین)
     # =========================================================================
@@ -684,7 +839,7 @@ def main(page: ft.Page):
             bgcolor=ft.colors.with_opacity(0.55, "#000000"),
             alignment=ft.alignment.center,
             padding=ft.padding.symmetric(horizontal=18, vertical=20),
-            on_click=lambda e: None,  # جذب کامل کلیک‌ها و جلوگیری از نفوذ به زیرین
+            on_click=lambda e: None,
             content=card_ctrl,
         )
         layer.open = False
@@ -693,7 +848,6 @@ def main(page: ft.Page):
     all_modals = []
 
     def sync_modal_state():
-        # اگر دیالوگ تایید (حذف/بازگردانی) باز باشد، حتی پنجره روییِ زیر آن هم قفل می‌شود
         confirm_is_open = getattr(confirm_dlg, "visible", False)
         any_modal_open = any(getattr(m, "visible", False) for m in all_modals)
 
@@ -784,7 +938,10 @@ def main(page: ft.Page):
         )
     )
 
-    def show_snackbar(message: str, bg_color=MOCHA_PRIMARY):
+    def show_snackbar(message: str, bg_color=None):
+        if bg_color is None:
+            bg_color = MOCHA_PRIMARY
+
         if getattr(cat_dialog, "visible", False):
             if cat_dlg_timer_ref[0] is not None:
                 try:
@@ -931,6 +1088,16 @@ def main(page: ft.Page):
     def _on_confirm_no(e):
         close_ctrl(confirm_dlg)
 
+    confirm_cancel_btn = ft.ElevatedButton(
+        "انصراف",
+        bgcolor=SURFACE_LATTE,
+        color=ESPRESSO_DARK,
+        elevation=0,
+        height=40,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+        on_click=_on_confirm_no
+    )
+
     confirm_yes_btn = ft.ElevatedButton(
         "بله، حذف شود",
         icon=ft.icons.CHECK_ROUNDED,
@@ -971,15 +1138,7 @@ def main(page: ft.Page):
                         alignment=ft.MainAxisAlignment.CENTER,
                         spacing=10,
                         controls=[
-                            ft.ElevatedButton(
-                                "انصراف",
-                                bgcolor=SURFACE_LATTE,
-                                color=ESPRESSO_DARK,
-                                elevation=0,
-                                height=40,
-                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
-                                on_click=_on_confirm_no
-                            ),
+                            confirm_cancel_btn,
                             confirm_yes_btn,
                         ]
                     )
@@ -1002,12 +1161,15 @@ def main(page: ft.Page):
         is_danger = (confirm_color == COST_RED_MAIN)
 
         confirm_action_ref[0] = on_confirm_callback
-        confirm_icon.name = icon_data
-        confirm_icon.color = confirm_color
+        confirm_icon_box.content = ft.Icon(icon_data, color=confirm_color, size=32)
         confirm_icon_box.bgcolor = COST_RED_SURFACE if is_danger else BG_CREAM
         confirm_icon_box.border = ft.border.all(1, COST_RED_BORDER if is_danger else BORDER_WARM)
         confirm_title_label.value = title_text
+        confirm_title_label.color = ESPRESSO_DARK
         confirm_msg_label.value = message_text
+        confirm_msg_label.color = TEXT_MUTED
+        confirm_cancel_btn.bgcolor = SURFACE_LATTE
+        confirm_cancel_btn.color = ESPRESSO_DARK
         confirm_yes_btn.text = confirm_btn_text
         confirm_yes_btn.bgcolor = confirm_color
 
@@ -1017,6 +1179,20 @@ def main(page: ft.Page):
         close_ctrl(dlg)
 
     def refresh_all_views():
+        nonlocal app_mode, active_section, dashboard_section_filter
+        app_mode = get_app_mode()
+        if app_mode == "cafe":
+            active_section = "cafe"
+            dashboard_section_filter = "cafe"
+        elif app_mode == "restaurant":
+            active_section = "restaurant"
+            dashboard_section_filter = "restaurant"
+        else:
+            if dashboard_section_filter not in ("all", "cafe", "restaurant"):
+                dashboard_section_filter = "all"
+
+        apply_active_theme()
+        render_section_switchers()
         refresh_category_dropdown()
         refresh_header_today_sales()
         render_cashier_category_chips()
@@ -1320,6 +1496,44 @@ def main(page: ft.Page):
             confirm_color=MOCHA_PRIMARY
         )
 
+    bkp_header_icon = ft.Icon(ft.icons.CLOUD_SYNC_ROUNDED, color=MOCHA_PRIMARY, size=20)
+    bkp_header_icon_box = ft.Container(
+        content=bkp_header_icon,
+        bgcolor=CHIP_LATTE,
+        padding=7,
+        border_radius=10,
+    )
+    bkp_new_btn = ft.ElevatedButton(
+        "ثبت بکاپ جدید (در برنامه + پوشه دانلود)",
+        icon=ft.icons.ADD_TASK_ROUNDED,
+        bgcolor=MOCHA_PRIMARY,
+        color=ft.colors.WHITE,
+        height=40,
+        expand=True,
+        rtl=True,
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=11),
+            text_style=ft.TextStyle(size=11, font_family="Vazir-Bold")
+        ),
+        on_click=create_new_backup_click
+    )
+    bkp_text_label = ft.Text("پشتیبان‌گیری متنی:", size=10, font_family="Vazir-Bold", color=MOCHA_PRIMARY)
+    bkp_restore_code_btn = ft.ElevatedButton(
+        "بازگردانی از کد",
+        icon=ft.icons.DOWNLOAD_DONE_ROUNDED,
+        bgcolor=MOCHA_PRIMARY,
+        color=ft.colors.WHITE,
+        elevation=0,
+        expand=1,
+        height=38,
+        rtl=True,
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=10),
+            text_style=ft.TextStyle(size=10, font_family="Vazir-Bold")
+        ),
+        on_click=restore_from_code_click
+    )
+
     bkp_card_box = ft.Container(
         width=375,
         bgcolor=CARD_IVORY,
@@ -1343,60 +1557,23 @@ def main(page: ft.Page):
                     alignment=ft.MainAxisAlignment.START,
                     spacing=8,
                     controls=[
-                        ft.Container(
-                            content=ft.Icon(ft.icons.CLOUD_SYNC_ROUNDED, color=MOCHA_PRIMARY, size=20),
-                            bgcolor=CHIP_LATTE,
-                            padding=7,
-                            border_radius=10,
-                        ),
+                        bkp_header_icon_box,
                         ft.Text("مرکز بکاپ و بازیابی اطلاعات", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                     ]
                 ),
-                ft.Row(
-                    rtl=True,
-                    controls=[
-                        ft.ElevatedButton(
-                            "ثبت بکاپ جدید (در برنامه + پوشه دانلود)",
-                            icon=ft.icons.ADD_TASK_ROUNDED,
-                            bgcolor=MOCHA_PRIMARY,
-                            color=ft.colors.WHITE,
-                            height=40,
-                            expand=True,
-                            rtl=True,
-                            style=ft.ButtonStyle(
-                                shape=ft.RoundedRectangleBorder(radius=11),
-                                text_style=ft.TextStyle(size=11, font_family="Vazir-Bold")
-                            ),
-                            on_click=create_new_backup_click
-                        )
-                    ]
-                ),
+                ft.Row(rtl=True, controls=[bkp_new_btn]),
                 status_banner,
                 ft.Text("بکاپ‌های موجود (بازگردانی سریع):", size=11, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                 backups_list_col,
                 ft.Container(height=1, bgcolor=BORDER_SAND, margin=ft.padding.symmetric(vertical=2)),
-                ft.Text("پشتیبان‌گیری متنی:", size=10, font_family="Vazir-Bold", color=MOCHA_PRIMARY),
+                bkp_text_label,
                 ft.Row(rtl=True, controls=[backup_code_field]),
                 ft.Row(
                     rtl=True,
                     spacing=8,
                     controls=[
                         copy_btn,
-                        ft.ElevatedButton(
-                            "بازگردانی از کد",
-                            icon=ft.icons.DOWNLOAD_DONE_ROUNDED,
-                            bgcolor=MOCHA_PRIMARY,
-                            color=ft.colors.WHITE,
-                            elevation=0,
-                            expand=1,
-                            height=38,
-                            rtl=True,
-                            style=ft.ButtonStyle(
-                                shape=ft.RoundedRectangleBorder(radius=10),
-                                text_style=ft.TextStyle(size=10, font_family="Vazir-Bold")
-                            ),
-                            on_click=restore_from_code_click
-                        ),
+                        bkp_restore_code_btn,
                     ]
                 ),
                 ft.Row(
@@ -1432,6 +1609,181 @@ def main(page: ft.Page):
         render_backups_list()
         open_ctrl(bkp_dlg)
 
+    # =========================================================================
+    # پنجره تغییر حالت برنامه (کافه / رستوران / کافه‌رستوران) - بدون حذف اطلاعات
+    # =========================================================================
+    mode_options_col = ft.Column(spacing=8, tight=True)
+
+    def select_new_app_mode(new_mode: str):
+        nonlocal app_mode, active_section, selected_cashier_category, dashboard_section_filter
+        app_mode = new_mode
+        set_app_mode_db(new_mode)
+
+        if new_mode == "cafe":
+            active_section = "cafe"
+            dashboard_section_filter = "cafe"
+            msg = "حالت برنامه روی «کافه» تنظیم شد."
+        elif new_mode == "restaurant":
+            active_section = "restaurant"
+            dashboard_section_filter = "restaurant"
+            msg = "حالت برنامه روی «رستوران» تنظیم شد."
+        else:
+            dashboard_section_filter = "all"
+            msg = "حالت «کافه‌رستوران» (دو منظوره) فعال شد."
+
+        selected_cashier_category = "همه"
+        close_ctrl(mode_dlg)
+        reset_menu_form()
+        refresh_all_views()
+        show_snackbar(msg, MOCHA_PRIMARY)
+
+    def render_mode_options():
+        mode_options_col.controls.clear()
+        modes_info = [
+            (
+                "cafe",
+                "کافه",
+                "منو، دسته‌بندی‌ها و تم اختصاصی کافه",
+                ft.icons.COFFEE_ROUNDED,
+                "#9C623E",
+                "#F7EDE2",
+            ),
+            (
+                "restaurant",
+                "رستوران",
+                "منو، دسته‌بندی‌ها و تم اختصاصی رستوران",
+                ft.icons.RESTAURANT_ROUNDED,
+                "#B54826",
+                "#FFEDD5",
+            ),
+            (
+                "both",
+                "کافه رستوران",
+                "قابلیت سوئیچ بین کافه و رستوران + گزارش مالی تفکیکی و تجمیعی",
+                ft.icons.STOREFRONT_ROUNDED,
+                BOTH_BLEND_MAIN,
+                BOTH_BLEND_BG,
+            ),
+        ]
+
+        for m_code, m_title, m_desc, m_icon, m_col, m_bg in modes_info:
+            is_curr = (app_mode == m_code)
+            card_item = ft.Container(
+                bgcolor=SURFACE_LATTE if is_curr else CARD_IVORY,
+                border=ft.border.all(2 if is_curr else 1, m_col if is_curr else BORDER_WARM),
+                border_radius=14,
+                padding=ft.padding.symmetric(horizontal=12, vertical=10),
+                on_click=lambda e, code=m_code: select_new_app_mode(code),
+                content=ft.Row(
+                    rtl=True,
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    controls=[
+                        ft.Row(
+                            rtl=True,
+                            spacing=10,
+                            expand=True,
+                            controls=[
+                                ft.Container(
+                                    content=ft.Icon(m_icon, color=m_col, size=22),
+                                    bgcolor=m_bg,
+                                    padding=9,
+                                    border_radius=12,
+                                ),
+                                ft.Column(
+                                    spacing=2,
+                                    expand=True,
+                                    controls=[
+                                        ft.Text(m_title, size=12, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                                        ft.Text(m_desc, size=10, color=TEXT_MUTED),
+                                    ]
+                                ),
+                            ]
+                        ),
+                        ft.Icon(
+                            ft.icons.CHECK_CIRCLE_ROUNDED if is_curr else ft.icons.RADIO_BUTTON_UNCHECKED_ROUNDED,
+                            color=m_col if is_curr else BORDER_WARM,
+                            size=20
+                        ),
+                    ]
+                )
+            )
+            mode_options_col.controls.append(card_item)
+
+    mode_dlg_header_icon_box = ft.Container(
+        content=ft.Icon(ft.icons.TUNE_ROUNDED, color=BOTH_BLEND_MAIN, size=20),
+        bgcolor=BOTH_BLEND_BG,
+        padding=7,
+        border_radius=10,
+    )
+
+    mode_dlg_info_box = ft.Container(
+        bgcolor=BOTH_BLEND_BG,
+        border=ft.border.all(1, BOTH_BLEND_BORDER),
+        border_radius=10,
+        padding=ft.padding.symmetric(horizontal=10, vertical=7),
+        content=ft.Row(
+            rtl=True,
+            spacing=6,
+            controls=[
+                ft.Icon(ft.icons.VERIFIED_USER_ROUNDED, color=BOTH_BLEND_MAIN, size=16),
+                ft.Text(
+                    "تغییر حالت باعث حذف محصولات یا فاکتورهای قبلی نمی‌شود.",
+                    size=10,
+                    font_family="Vazir-Bold",
+                    color=ESPRESSO_DARK,
+                    expand=True,
+                ),
+            ]
+        )
+    )
+
+    mode_card_box = ft.Container(
+        width=365,
+        bgcolor=CARD_IVORY,
+        border_radius=20,
+        padding=ft.padding.only(top=16, left=16, right=16, bottom=12),
+        shadow=ft.BoxShadow(
+            blur_radius=24,
+            color=ft.colors.with_opacity(0.28, "#000000"),
+            offset=ft.Offset(0, 8),
+        ),
+        on_click=lambda e: None,
+        rtl=True,
+        content=ft.Column(
+            rtl=True,
+            tight=True,
+            spacing=10,
+            controls=[
+                ft.Row(
+                    rtl=True,
+                    spacing=8,
+                    controls=[
+                        mode_dlg_header_icon_box,
+                        ft.Text("انتخاب حالت برنامه (کافه / رستوران)", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                    ]
+                ),
+                mode_options_col,
+                mode_dlg_info_box,
+                ft.Row(
+                    rtl=True,
+                    alignment=ft.MainAxisAlignment.END,
+                    controls=[
+                        ft.TextButton(
+                            "بستن",
+                            style=ft.ButtonStyle(color=ESPRESSO_DARK),
+                            on_click=lambda e: close_ctrl(mode_dlg)
+                        )
+                    ]
+                )
+            ]
+        )
+    )
+    mode_dlg = make_centered_modal(mode_card_box)
+
+    def open_mode_selector_dialog(e=None):
+        render_mode_options()
+        open_ctrl(mode_dlg)
+
     # --- هدر بالای برنامه ---
     today_jy, today_jm, today_jd = gregorian_to_jalali(now_dt.year, now_dt.month, now_dt.day)
     today_badge_str = f"{today_jd} {JALALI_MONTHS[today_jm - 1]} {today_jy}"
@@ -1441,7 +1793,21 @@ def main(page: ft.Page):
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         today_prefix = datetime.now().strftime("%Y-%m-%d")
-        cursor.execute("SELECT COALESCE(SUM(sell_price), 0) FROM orders WHERE substr(order_date, 1, 10) = ?", (today_prefix,))
+        if app_mode == "cafe":
+            cursor.execute(
+                "SELECT COALESCE(SUM(sell_price), 0) FROM orders WHERE substr(order_date, 1, 10) = ? AND section = 'cafe'",
+                (today_prefix,)
+            )
+        elif app_mode == "restaurant":
+            cursor.execute(
+                "SELECT COALESCE(SUM(sell_price), 0) FROM orders WHERE substr(order_date, 1, 10) = ? AND section = 'restaurant'",
+                (today_prefix,)
+            )
+        else:
+            cursor.execute(
+                "SELECT COALESCE(SUM(sell_price), 0) FROM orders WHERE substr(order_date, 1, 10) = ?",
+                (today_prefix,)
+            )
         val = cursor.fetchone()[0]
         conn.close()
         header_today_sales_text.value = f"{format_price(val)} تومان"
@@ -1462,32 +1828,60 @@ def main(page: ft.Page):
         tooltip="مرکز بکاپ و بازیابی اطلاعات",
     )
 
+    mode_btn = ft.Container(
+        content=ft.Icon(ft.icons.TUNE_ROUNDED, color="#FFFDF9", size=15),
+        bgcolor=ft.colors.with_opacity(0.22, "#FFFDF9"),
+        border=ft.border.all(1, ft.colors.with_opacity(0.35, "#FFFDF9")),
+        padding=ft.padding.symmetric(horizontal=7, vertical=4),
+        border_radius=12,
+        on_click=open_mode_selector_dialog,
+        tooltip="تغییر حالت (کافه / رستوران / کافه‌رستوران)",
+    )
+
+    def _get_header_mode_icon():
+        if app_mode == "cafe":
+            return ft.icons.COFFEE_ROUNDED
+        elif app_mode == "restaurant":
+            return ft.icons.RESTAURANT_ROUNDED
+        return ft.icons.STOREFRONT_ROUNDED
+
+    header_logo_icon = ft.Icon(_get_header_mode_icon(), color="#FFFDF9", size=22)
+    header_logo_box = ft.Container(
+        content=header_logo_icon,
+        bgcolor=ft.colors.with_opacity(0.2, "#FFFDF9"),
+        padding=8,
+        border_radius=12,
+        border=ft.border.all(1, ft.colors.with_opacity(0.35, "#FFFDF9")),
+        on_click=open_mode_selector_dialog,
+        tooltip="تغییر حالت (کافه / رستوران / کافه رستوران)",
+    )
+
+    header_sub_title = ft.Text(
+        "حسابداری کافه" if app_mode == "cafe" else ("حسابداری رستوران" if app_mode == "restaurant" else "حسابداری کافه رستوران"),
+        size=9,
+        color="#F6EFE6"
+    )
+
     top_app_header = ft.Container(
         padding=ft.padding.only(top=44, bottom=14, left=12, right=12),
         gradient=ft.LinearGradient(
             begin=ft.alignment.top_right,
             end=ft.alignment.bottom_left,
-            colors=["#8A5434", "#A66B46", "#C2845B"]
+            colors=_initial_theme["HEADER_GRAD"]
         ),
-        shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.18, "#8A5434"), offset=ft.Offset(0, 4)),
+        shadow=ft.BoxShadow(blur_radius=14, color=ft.colors.with_opacity(0.18, _initial_theme["HEADER_SHADOW"]), offset=ft.Offset(0, 4)),
         content=ft.Row(
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             controls=[
                 ft.Row(
                     spacing=8,
                     controls=[
-                        ft.Container(
-                            content=ft.Icon(ft.icons.COFFEE_ROUNDED, color="#FFFDF9", size=22),
-                            bgcolor=ft.colors.with_opacity(0.2, "#FFFDF9"),
-                            padding=8,
-                            border_radius=12,
-                            border=ft.border.all(1, ft.colors.with_opacity(0.35, "#FFFDF9")),
-                        ),
+                        header_logo_box,
                         ft.Column(
                             spacing=2,
                             controls=[
                                 ft.Text("ویتا حساب", size=14, font_family="Vazir-Bold", color="#FFFDF9"),
-                                ft.Text("حسابداری کافه", size=9, color="#F6EFE6"),
+                                header_sub_title,
                             ]
                         )
                     ]
@@ -1497,7 +1891,7 @@ def main(page: ft.Page):
                     spacing=4,
                     controls=[
                         ft.Row(
-                            spacing=6,
+                            spacing=5,
                             controls=[
                                 ft.Container(
                                     bgcolor=ft.colors.with_opacity(0.2, "#FFFDF9"),
@@ -1513,6 +1907,7 @@ def main(page: ft.Page):
                                     )
                                 ),
                                 backup_btn,
+                                mode_btn,
                             ]
                         ),
                         ft.Row(
@@ -1527,6 +1922,86 @@ def main(page: ft.Page):
             ]
         )
     )
+
+    # =========================================================================
+    # نوار سوئیچ سریع بین بخش کافه و بخش رستوران (فقط در حالت دو منظوره «کافه‌رستوران»)
+    # =========================================================================
+    pos_section_switcher_row = ft.Row(spacing=8)
+    pos_section_switcher_box = ft.Container(
+        visible=(app_mode == "both"),
+        content=pos_section_switcher_row,
+    )
+
+    menu_section_switcher_row = ft.Row(spacing=8)
+    menu_section_switcher_box = ft.Container(
+        visible=(app_mode == "both"),
+        content=menu_section_switcher_row,
+    )
+
+    def switch_active_section(sec_name: str):
+        nonlocal active_section, selected_cashier_category
+        if active_section == sec_name:
+            return
+        active_section = sec_name
+        selected_cashier_category = "همه"
+        close_custom_dropdown()
+        reset_menu_form()
+        apply_active_theme()
+        render_section_switchers()
+        refresh_category_dropdown()
+        render_cashier_category_chips()
+        load_cashier_products()
+        load_menu_products()
+        page.update()
+
+    def render_section_switchers():
+        is_both = (app_mode == "both")
+        pos_section_switcher_box.visible = is_both
+        menu_section_switcher_box.visible = is_both
+        if not is_both:
+            return
+
+        def _build_pair():
+            items = [
+                ("cafe", "بخش کافه", ft.icons.COFFEE_ROUNDED, "#9C623E"),
+                ("restaurant", "بخش رستوران", ft.icons.RESTAURANT_ROUNDED, "#B54826"),
+            ]
+            ctrls = []
+            for s_key, s_title, s_icon, s_color in items:
+                is_act = (active_section == s_key)
+                ctrls.append(
+                    ft.Container(
+                        expand=1,
+                        bgcolor=s_color if is_act else CARD_IVORY,
+                        border=ft.border.all(1.5 if is_act else 1, s_color if is_act else BORDER_WARM),
+                        border_radius=12,
+                        padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                        alignment=ft.alignment.center,
+                        on_click=lambda e, k=s_key: switch_active_section(k),
+                        shadow=ft.BoxShadow(
+                            blur_radius=8,
+                            color=ft.colors.with_opacity(0.22 if is_act else 0.04, s_color),
+                            offset=ft.Offset(0, 2)
+                        ),
+                        content=ft.Row(
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            spacing=6,
+                            controls=[
+                                ft.Icon(s_icon, size=16, color=CARD_IVORY if is_act else s_color),
+                                ft.Text(
+                                    s_title,
+                                    size=11,
+                                    font_family="Vazir-Bold",
+                                    color=CARD_IVORY if is_act else ESPRESSO_DARK
+                                ),
+                            ]
+                        )
+                    )
+                )
+            return ctrls
+
+        pos_section_switcher_row.controls = _build_pair()
+        menu_section_switcher_row.controls = _build_pair()
 
     # =========================================================================
     # 1. تب صندوق فروش (POS) - بدون قابلیت حذف دسته‌بندی در این بخش
@@ -1547,7 +2022,7 @@ def main(page: ft.Page):
         def confirmed_delete_cat():
             conn = sqlite3.connect(DB_NAME)
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM categories WHERE name = ?", (cat_name,))
+            cursor.execute("DELETE FROM categories WHERE name = ? AND section = ?", (cat_name, active_section))
             conn.commit()
             conn.close()
 
@@ -1568,7 +2043,7 @@ def main(page: ft.Page):
 
     def render_cashier_category_chips():
         cashier_categories_row.controls.clear()
-        all_cats = ["همه"] + get_all_categories()
+        all_cats = ["همه"] + get_all_categories(active_section)
         for c in all_cats:
             is_sel = (selected_cashier_category == c)
             chip_box = ft.Container(
@@ -1613,6 +2088,7 @@ def main(page: ft.Page):
 
     def get_category_style(cat: str):
         styles = {
+            # دسته‌بندی‌های پیش‌فرض کافه (کاملاً دست‌نخورده)
             "قهوه‌ها": (ft.icons.COFFEE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5"),
             "نوشیدنی‌های گرم بر پایۀ قهوه": (ft.icons.LOCAL_CAFE_ROUNDED, "#9A5B13", "#FEF3C7", "#FDE68A"),
             "نوشیدنی‌های سرد بر پایۀ قهوه": (ft.icons.AC_UNIT_ROUNDED, "#0369A1", "#E0F2FE", "#BAE6FD"),
@@ -1623,19 +2099,47 @@ def main(page: ft.Page):
             "چای‌ها": (ft.icons.EMOJI_FOOD_BEVERAGE_ROUNDED, "#047857", "#D1FAE5", "#A7F3D0"),
             "دمنوش‌ها": (ft.icons.SPA_ROUNDED, "#15803D", "#DCFCE7", "#BBF7D0"),
             "کیک و دسر": (ft.icons.COOKIE_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A"),
+
+            # دسته‌بندی‌های پیش‌فرض رستوران
+            "کباب و گریل": (ft.icons.OUTDOOR_GRILL_ROUNDED, "#B43E24", "#FFEDD5", "#FDBA74"),
+            "خورشت و غذای سنتی": (ft.icons.RICE_BOWL_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A"),
+            "پیتزا": (ft.icons.LOCAL_PIZZA_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA"),
+            "برگر و ساندویچ": (ft.icons.LUNCH_DINING_ROUNDED, "#9A3412", "#FEF3C7", "#FCD34D"),
+            "پاستا و استیک": (ft.icons.DINNER_DINING_ROUNDED, "#7C2D12", "#FCE7F3", "#FBCFE8"),
+            "سوخاری و فینگر فود": (ft.icons.FASTFOOD_ROUNDED, "#D97706", "#FEF9C3", "#FDE047"),
+            "پیش‌غذا و سوپ": (ft.icons.SOUP_KITCHEN_ROUNDED, "#0F766E", "#CCFBF1", "#99F6E4"),
+            "سالاد و مخلفات": (ft.icons.ECO_ROUNDED, "#15803D", "#DCFCE7", "#BBF7D0"),
+            "صبحانه و برانچ": (ft.icons.EGG_ALT_ROUNDED, "#A16207", "#FEF3C7", "#FDE68A"),
+            "نوشیدنی سرد": (ft.icons.LOCAL_DRINK_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD"),
         }
         if cat in styles:
             return styles[cat]
 
+        if any(w in cat for w in ("کباب", "جوجه", "بریانی", "گریل", "شیشلیک", "کوبیده")):
+            return (ft.icons.OUTDOOR_GRILL_ROUNDED, "#B43E24", "#FFEDD5", "#FDBA74")
+        if any(w in cat for w in ("پلو", "چلو", "خورشت", "سنتی", "ایرانی", "دیزی", "آبگوشت", "تهچین")):
+            return (ft.icons.RICE_BOWL_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A")
+        if any(w in cat for w in ("پیتزا", "کالزونه", "لازانیا")):
+            return (ft.icons.LOCAL_PIZZA_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA")
+        if any(w in cat for w in ("برگر", "ساندویچ", "هات‌داگ", "هات داگ", "اسنک", "پنینی", "تست")):
+            return (ft.icons.LUNCH_DINING_ROUNDED, "#9A3412", "#FEF3C7", "#FCD34D")
+        if any(w in cat for w in ("پاستا", "استیک", "فرنگی", "ماهی", "میگو", "دریایی")):
+            return (ft.icons.DINNER_DINING_ROUNDED, "#7C2D12", "#FCE7F3", "#FBCFE8")
+        if any(w in cat for w in ("سوخاری", "فینگر", "سیب‌زمینی", "سیب زمینی", "کنتاکی")):
+            return (ft.icons.FASTFOOD_ROUNDED, "#D97706", "#FEF9C3", "#FDE047")
+        if any(w in cat for w in ("سوپ", "آش", "پیش‌غذا", "پیش غذا", "حمص")):
+            return (ft.icons.SOUP_KITCHEN_ROUNDED, "#0F766E", "#CCFBF1", "#99F6E4")
+        if any(w in cat for w in ("سالاد", "زیتون", "ماست", "ترشی", "مخلفات", "گیاهی", "عرقیات")):
+            return (ft.icons.ECO_ROUNDED, "#15803D", "#DCFCE7", "#BBF7D0")
+        if any(w in cat for w in ("صبحانه", "املت", "نیمرو", "برانچ")):
+            return (ft.icons.EGG_ALT_ROUNDED, "#A16207", "#FEF3C7", "#FDE68A")
         if any(w in cat for w in ("شیرینی", "کوکی", "کروسان", "وافل", "پنکیک")):
             return (ft.icons.BAKERY_DINING_ROUNDED, "#B45309", "#FEF3C7", "#FDE68A")
-        if any(w in cat for w in ("سرد", "آیس", "فراپه", "ماکتیل", "اسموتی", "آب‌میوه")):
+        if any(w in cat for w in ("سرد", "آیس", "فراپه", "ماکتیل", "اسموتی", "آب‌میوه", "نوشابه", "دوغ")):
             return (ft.icons.LOCAL_DRINK_ROUNDED, "#0284C7", "#E0F2FE", "#BAE6FD")
-        if any(w in cat for w in ("گیاهی", "عرقیات")):
-            return (ft.icons.ECO_ROUNDED, "#15803D", "#DCFCE7", "#BBF7D0")
         if any(w in cat for w in ("دمی",)):
             return (ft.icons.LOCAL_CAFE_ROUNDED, "#8C532E", "#F7EDE2", "#E2CBB5")
-        if any(w in cat for w in ("غذا", "صبحانه", "اسنک", "پنینی", "پاستا", "ساندویچ", "تست")):
+        if any(w in cat for w in ("غذا", "رستوران")):
             return (ft.icons.RESTAURANT_ROUNDED, "#C2410C", "#FFEDD5", "#FED7AA")
         if any(w in cat for w in ("بستنی", "شیک")):
             return (ft.icons.ICE_CREAM_ROUNDED, "#BE185D", "#FCE7F3", "#FBCFE8")
@@ -1655,7 +2159,10 @@ def main(page: ft.Page):
         cashier_products_col.controls.clear()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, category, cost_price, sell_price FROM products ORDER BY sort_index ASC")
+        cursor.execute(
+            "SELECT id, name, category, cost_price, sell_price FROM products WHERE section = ? ORDER BY sort_index ASC",
+            (active_section,)
+        )
         rows = cursor.fetchall()
         conn.close()
 
@@ -1668,6 +2175,7 @@ def main(page: ft.Page):
             filtered_rows.append(r)
 
         if not filtered_rows:
+            empty_icon = ft.icons.COFFEE_ROUNDED if active_section == "cafe" else ft.icons.RESTAURANT_ROUNDED
             cashier_products_col.controls.append(
                 ft.Container(
                     bgcolor=CARD_IVORY,
@@ -1680,7 +2188,7 @@ def main(page: ft.Page):
                         spacing=8,
                         controls=[
                             ft.Container(
-                                content=ft.Icon(ft.icons.COFFEE_MAKER_OUTLINED, size=36, color=CARAMEL_ACCENT),
+                                content=ft.Icon(empty_icon, size=36, color=CARAMEL_ACCENT),
                                 bgcolor=SURFACE_LATTE,
                                 padding=14,
                                 border_radius=50,
@@ -1702,16 +2210,16 @@ def main(page: ft.Page):
                 p_id, p_name, p_cat, p_cost, p_sell = row
                 cat_icon, cat_color, cat_bg, cat_border = get_category_style(p_cat)
 
-                def direct_checkout_click(e, prod=(p_id, p_name, p_cost, p_sell)):
+                def direct_checkout_click(e, prod=(p_id, p_name, p_cost, p_sell), sec=active_section):
                     conn = sqlite3.connect(DB_NAME)
                     cursor = conn.cursor()
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                     unit_profit = prod[3] - prod[2]
 
                     cursor.execute("""
-                        INSERT INTO orders (product_name, sell_price, profit, order_date)
-                        VALUES (?, ?, ?, ?)
-                    """, (prod[1], prod[3], unit_profit, now_str))
+                        INSERT INTO orders (product_name, sell_price, profit, order_date, section)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (prod[1], prod[3], unit_profit, now_str, sec))
 
                     conn.commit()
                     conn.close()
@@ -1830,10 +2338,20 @@ def main(page: ft.Page):
         orders_list_col.controls.clear()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM orders")
-        total_orders = cursor.fetchone()[0]
 
-        cursor.execute("SELECT id, product_name, sell_price, order_date FROM orders ORDER BY id DESC LIMIT 25")
+        if app_mode == "cafe":
+            cursor.execute("SELECT COUNT(*) FROM orders WHERE section = 'cafe'")
+            total_orders = cursor.fetchone()[0]
+            cursor.execute("SELECT id, product_name, sell_price, order_date, section FROM orders WHERE section = 'cafe' ORDER BY id DESC LIMIT 25")
+        elif app_mode == "restaurant":
+            cursor.execute("SELECT COUNT(*) FROM orders WHERE section = 'restaurant'")
+            total_orders = cursor.fetchone()[0]
+            cursor.execute("SELECT id, product_name, sell_price, order_date, section FROM orders WHERE section = 'restaurant' ORDER BY id DESC LIMIT 25")
+        else:
+            cursor.execute("SELECT COUNT(*) FROM orders")
+            total_orders = cursor.fetchone()[0]
+            cursor.execute("SELECT id, product_name, sell_price, order_date, section FROM orders ORDER BY id DESC LIMIT 25")
+
         rows = cursor.fetchall()
         conn.close()
 
@@ -1847,7 +2365,7 @@ def main(page: ft.Page):
             )
         else:
             for idx, r in enumerate(rows):
-                o_id, o_name, o_price, o_date = r
+                o_id, o_name, o_price, o_date, o_sec = r
                 jalali_dt = format_jalali_datetime(o_date)
                 display_num = total_orders - idx
 
@@ -1874,6 +2392,21 @@ def main(page: ft.Page):
                         confirmed_delete
                     )
 
+                name_row_controls = [
+                    ft.Text(o_name, size=12, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                ]
+                if app_mode == "both":
+                    sec_label = "کافه" if o_sec == "cafe" else "رستوران"
+                    sec_col = "#9C623E" if o_sec == "cafe" else "#B54826"
+                    name_row_controls.append(
+                        ft.Container(
+                            bgcolor=CHIP_LATTE,
+                            padding=ft.padding.symmetric(horizontal=5, vertical=1),
+                            border_radius=5,
+                            content=ft.Text(sec_label, size=8, font_family="Vazir-Bold", color=sec_col),
+                        )
+                    )
+
                 orders_list_col.controls.append(
                     ft.Container(
                         bgcolor=SURFACE_LATTE,
@@ -1898,7 +2431,7 @@ def main(page: ft.Page):
                                             spacing=2,
                                             horizontal_alignment=ft.CrossAxisAlignment.START,
                                             controls=[
-                                                ft.Text(o_name, size=12, font_family="Vazir-Bold", color=ESPRESSO_DARK),
+                                                ft.Row(rtl=True, spacing=6, controls=name_row_controls),
                                                 ft.Row(
                                                     rtl=True,
                                                     spacing=4,
@@ -1939,6 +2472,7 @@ def main(page: ft.Page):
             spacing=12,
             expand=True,
             controls=[
+                pos_section_switcher_box,
                 ft.Row(
                     spacing=10,
                     controls=[
@@ -1975,9 +2509,15 @@ def main(page: ft.Page):
         cursor = conn.cursor()
 
         if direction == "up":
-            cursor.execute("SELECT id, sort_index FROM products WHERE sort_index < ? ORDER BY sort_index DESC LIMIT 1", (current_sort,))
+            cursor.execute(
+                "SELECT id, sort_index FROM products WHERE section = ? AND sort_index < ? ORDER BY sort_index DESC LIMIT 1",
+                (active_section, current_sort)
+            )
         else:
-            cursor.execute("SELECT id, sort_index FROM products WHERE sort_index > ? ORDER BY sort_index ASC LIMIT 1", (current_sort,))
+            cursor.execute(
+                "SELECT id, sort_index FROM products WHERE section = ? AND sort_index > ? ORDER BY sort_index ASC LIMIT 1",
+                (active_section, current_sort)
+            )
 
         adjacent = cursor.fetchone()
         if adjacent:
@@ -2041,7 +2581,7 @@ def main(page: ft.Page):
         was_open = custom_dropdown_list_container.visible or dropdown_backdrop.visible
         custom_dropdown_list_container.visible = False
         dropdown_backdrop.visible = False
-        dropdown_arrow_icon.name = ft.icons.ARROW_DROP_DOWN_ROUNDED
+        set_icon_value(dropdown_arrow_icon, ft.icons.ARROW_DROP_DOWN_ROUNDED)
         custom_dropdown_box.border_radius = 10
         if was_open:
             refresh_ui(custom_dropdown_box, custom_dropdown_list_container, dropdown_backdrop)
@@ -2073,7 +2613,7 @@ def main(page: ft.Page):
 
     def refresh_custom_dropdown_list():
         custom_dropdown_list.controls.clear()
-        cats = get_all_categories()
+        cats = get_all_categories(active_section)
         for c in cats:
             is_sel = (c == form_category_value[0])
             item_box = ft.Container(
@@ -2131,7 +2671,7 @@ def main(page: ft.Page):
 
             custom_dropdown_list_container.visible = True
             dropdown_backdrop.visible = True
-            dropdown_arrow_icon.name = ft.icons.ARROW_DROP_UP_ROUNDED
+            set_icon_value(dropdown_arrow_icon, ft.icons.ARROW_DROP_UP_ROUNDED)
             custom_dropdown_box.border_radius = ft.border_radius.only(top_left=10, top_right=10)
             refresh_custom_dropdown_list()
             refresh_ui(custom_dropdown_box, custom_dropdown_list_container, dropdown_backdrop)
@@ -2165,7 +2705,7 @@ def main(page: ft.Page):
     )
 
     def refresh_category_dropdown(selected: str = None):
-        cats = get_all_categories()
+        cats = get_all_categories(active_section)
         if selected and selected in cats:
             form_category_value[0] = selected
         elif form_category_value[0] not in cats:
@@ -2188,7 +2728,7 @@ def main(page: ft.Page):
         try:
             conn = sqlite3.connect(DB_NAME)
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO categories (name) VALUES (?)", (c_name,))
+            cursor.execute("INSERT INTO categories (name, section) VALUES (?, ?)", (c_name, active_section))
             conn.commit()
             conn.close()
             new_cat_input.value = ""
@@ -2206,6 +2746,19 @@ def main(page: ft.Page):
         new_cat_input.value = ""
         close_custom_dropdown()
         open_ctrl(cat_dialog)
+
+    cat_dlg_icon = ft.Icon(ft.icons.CREATE_NEW_FOLDER_ROUNDED, color=MOCHA_PRIMARY, size=20)
+    cat_dlg_icon_box = ft.Container(content=cat_dlg_icon, bgcolor=CHIP_LATTE, padding=7, border_radius=10)
+    cat_dlg_add_btn = ft.ElevatedButton(
+        "افزودن",
+        icon=ft.icons.ADD_ROUNDED,
+        bgcolor=MOCHA_PRIMARY,
+        color=ft.colors.WHITE,
+        height=38,
+        rtl=True,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+        on_click=submit_new_category
+    )
 
     cat_dialog_card = ft.Container(
         width=325,
@@ -2227,7 +2780,7 @@ def main(page: ft.Page):
                 ft.Row(
                     rtl=True, alignment=ft.MainAxisAlignment.START, spacing=8,
                     controls=[
-                        ft.Container(content=ft.Icon(ft.icons.CREATE_NEW_FOLDER_ROUNDED, color=MOCHA_PRIMARY, size=20), bgcolor=CHIP_LATTE, padding=7, border_radius=10),
+                        cat_dlg_icon_box,
                         ft.Text("افزودن دسته‌بندی جدید", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
                     ]
                 ),
@@ -2237,7 +2790,7 @@ def main(page: ft.Page):
                     rtl=True, alignment=ft.MainAxisAlignment.END, spacing=8,
                     controls=[
                         ft.TextButton("انصراف", style=ft.ButtonStyle(color=ESPRESSO_DARK), on_click=lambda e: close_ctrl(cat_dialog)),
-                        ft.ElevatedButton("افزودن", icon=ft.icons.ADD_ROUNDED, bgcolor=MOCHA_PRIMARY, color=ft.colors.WHITE, height=38, rtl=True, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), on_click=submit_new_category),
+                        cat_dlg_add_btn,
                     ]
                 )
             ]
@@ -2347,6 +2900,26 @@ def main(page: ft.Page):
 
     menu_products_col = ft.Column(spacing=8)
     menu_count_badge = ft.Text("0 محصول", size=11, font_family="Vazir-Bold", color=MOCHA_PRIMARY)
+    menu_count_badge_box = ft.Container(
+        bgcolor=CHIP_LATTE,
+        padding=ft.padding.symmetric(horizontal=7, vertical=3),
+        border_radius=8,
+        content=menu_count_badge
+    )
+    menu_header_icon = ft.Icon(ft.icons.MENU_BOOK_ROUNDED, color=MOCHA_PRIMARY, size=18)
+    menu_header_icon_box = ft.Container(
+        content=menu_header_icon,
+        bgcolor=CHIP_LATTE,
+        padding=7,
+        border_radius=10,
+    )
+
+    sell_words_icon = ft.Icon(ft.icons.SUBDIRECTORY_ARROW_LEFT_ROUNDED, size=12, color=MOCHA_PRIMARY)
+    sell_words_box = ft.Container(
+        bgcolor=BG_CREAM, border=ft.border.all(1, BORDER_SAND),
+        border_radius=8, padding=ft.padding.symmetric(horizontal=8, vertical=4),
+        content=ft.Row(spacing=4, controls=[sell_words_icon, ft.Container(content=sell_words_text, expand=True)])
+    )
 
     add_form_content = ft.Column(
         spacing=10,
@@ -2375,11 +2948,7 @@ def main(page: ft.Page):
                         spacing=4, expand=1,
                         controls=[
                             sell_input,
-                            ft.Container(
-                                bgcolor=BG_CREAM, border=ft.border.all(1, BORDER_SAND),
-                                border_radius=8, padding=ft.padding.symmetric(horizontal=8, vertical=4),
-                                content=ft.Row(spacing=4, controls=[ft.Icon(ft.icons.SUBDIRECTORY_ARROW_LEFT_ROUNDED, size=12, color=MOCHA_PRIMARY), ft.Container(content=sell_words_text, expand=True)])
-                            )
+                            sell_words_box,
                         ]
                     )
                 ]
@@ -2482,18 +3051,18 @@ def main(page: ft.Page):
         cursor = conn.cursor()
 
         if editing_product_id is None:
-            cursor.execute("SELECT MAX(sort_index) FROM products")
+            cursor.execute("SELECT MAX(sort_index) FROM products WHERE section = ?", (active_section,))
             max_sort = cursor.fetchone()[0]
             new_sort = (max_sort or 0) + 1
 
             cursor.execute("""
-                INSERT INTO products (name, category, cost_price, sell_price, sort_index)
-                VALUES (?, ?, ?, ?, ?)
-            """, (name, cat, cost_val, sell_val, new_sort))
+                INSERT INTO products (name, category, cost_price, sell_price, sort_index, section)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (name, cat, cost_val, sell_val, new_sort, active_section))
             show_snackbar(f"محصول «{name}» با موفقیت به منو اضافه شد.", MOCHA_PRIMARY)
         else:
-            cursor.execute("SELECT name FROM products WHERE id = ?", (editing_product_id,))
-            old_name_row = cursor.fetchone()
+            cursor.execute("SELECT name, section FROM products WHERE id = ?", (editing_product_id,))
+            old_row = cursor.fetchone()
 
             cursor.execute("""
                 UPDATE products
@@ -2501,14 +3070,14 @@ def main(page: ft.Page):
                 WHERE id = ?
             """, (name, cat, cost_val, sell_val, editing_product_id))
 
-            if old_name_row:
-                old_name = old_name_row[0]
+            if old_row:
+                old_name, old_sec = old_row[0], old_row[1]
                 if old_name != name:
                     cursor.execute("""
                         UPDATE orders
                         SET product_name = ?
-                        WHERE product_name = ?
-                    """, (name, old_name))
+                        WHERE product_name = ? AND section = ?
+                    """, (name, old_name, old_sec))
 
             show_snackbar(f"اطلاعات «{name}» بروزرسانی شد.", CARAMEL_ACCENT)
 
@@ -2522,7 +3091,10 @@ def main(page: ft.Page):
         menu_products_col.controls.clear()
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, category, cost_price, sell_price, sort_index FROM products ORDER BY sort_index ASC")
+        cursor.execute(
+            "SELECT id, name, category, cost_price, sell_price, sort_index FROM products WHERE section = ? ORDER BY sort_index ASC",
+            (active_section,)
+        )
         rows = cursor.fetchall()
         conn.close()
 
@@ -2695,25 +3267,16 @@ def main(page: ft.Page):
             expand=True,
             scroll=ft.ScrollMode.AUTO,
             controls=[
+                menu_section_switcher_box,
                 ft.Row(
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
                         ft.Row(
                             spacing=6,
                             controls=[
-                                ft.Container(
-                                    content=ft.Icon(ft.icons.MENU_BOOK_ROUNDED, color=MOCHA_PRIMARY, size=18),
-                                    bgcolor=CHIP_LATTE,
-                                    padding=7,
-                                    border_radius=10,
-                                ),
+                                menu_header_icon_box,
                                 ft.Text("مدیریت منو", size=14, font_family="Vazir-Bold", color=ESPRESSO_DARK),
-                                ft.Container(
-                                    bgcolor=CHIP_LATTE,
-                                    padding=ft.padding.symmetric(horizontal=7, vertical=3),
-                                    border_radius=8,
-                                    content=menu_count_badge
-                                )
+                                menu_count_badge_box,
                             ]
                         ),
                         show_add_form_btn
@@ -2737,6 +3300,8 @@ def main(page: ft.Page):
     period_summary_badge = ft.Text("0 فروش", size=10, font_family="Vazir-Bold", color="#FFFDF9")
 
     report_items_col = ft.Column(spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)
+    dashboard_sec_filter_row = ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER)
+    dashboard_sec_filter_box = ft.Container(visible=(app_mode == "both"), content=dashboard_sec_filter_row)
     mode_selector_row = ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER)
     date_navigator_container = ft.Container()
 
@@ -2856,6 +3421,23 @@ def main(page: ft.Page):
         update_dashboard_controls()
         load_dashboard_data()
 
+    cal_next_btn = ft.Container(
+        content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+        bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+        tooltip="ماه بعد",
+        on_click=lambda e: change_cal_month(1)
+    )
+    cal_prev_btn = ft.Container(
+        content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
+        bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
+        tooltip="ماه قبل",
+        on_click=lambda e: change_cal_month(-1)
+    )
+    cal_today_btn = ft.ElevatedButton(
+        "برو به امروز", icon=ft.icons.TODAY_ROUNDED,
+        bgcolor=CHIP_LATTE, color=ESPRESSO_DARK, elevation=0, on_click=go_to_today
+    )
+
     cal_card_box = ft.Container(
         width=325,
         bgcolor=CARD_IVORY,
@@ -2878,19 +3460,9 @@ def main(page: ft.Page):
                     rtl=True,
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                     controls=[
-                        ft.Container(
-                            content=ft.Icon(ft.icons.CHEVRON_RIGHT_ROUNDED, color=MOCHA_PRIMARY, size=20),
-                            bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                            tooltip="ماه بعد",
-                            on_click=lambda e: change_cal_month(1)
-                        ),
+                        cal_next_btn,
                         cal_header_text,
-                        ft.Container(
-                            content=ft.Icon(ft.icons.CHEVRON_LEFT_ROUNDED, color=MOCHA_PRIMARY, size=20),
-                            bgcolor=CHIP_LATTE, width=34, height=34, border_radius=8, alignment=ft.alignment.center,
-                            tooltip="ماه قبل",
-                            on_click=lambda e: change_cal_month(-1)
-                        ),
+                        cal_prev_btn,
                     ]
                 ),
                 ft.Container(
@@ -2908,10 +3480,7 @@ def main(page: ft.Page):
                             style=ft.ButtonStyle(color=ESPRESSO_DARK),
                             on_click=lambda e: close_dialog(cal_dlg)
                         ),
-                        ft.ElevatedButton(
-                            "برو به امروز", icon=ft.icons.TODAY_ROUNDED,
-                            bgcolor=CHIP_LATTE, color=ESPRESSO_DARK, elevation=0, on_click=go_to_today
-                        )
+                        cal_today_btn
                     ]
                 )
             ]
@@ -2928,6 +3497,12 @@ def main(page: ft.Page):
     def switch_filter_mode(new_mode: str):
         nonlocal filter_mode
         filter_mode = new_mode
+        update_dashboard_controls()
+        load_dashboard_data()
+
+    def switch_dashboard_section_filter(sec_key: str):
+        nonlocal dashboard_section_filter
+        dashboard_section_filter = sec_key
         update_dashboard_controls()
         load_dashboard_data()
 
@@ -2952,6 +3527,36 @@ def main(page: ft.Page):
         load_dashboard_data()
 
     def update_dashboard_controls():
+        dashboard_sec_filter_box.visible = (app_mode == "both")
+        if app_mode == "both":
+            sec_opts = [
+                ("all", "کل مجموعه", ft.icons.STOREFRONT_ROUNDED, BOTH_BLEND_MAIN),
+                ("cafe", "بخش کافه", ft.icons.COFFEE_ROUNDED, "#9C623E"),
+                ("restaurant", "بخش رستوران", ft.icons.RESTAURANT_ROUNDED, "#B54826"),
+            ]
+            dashboard_sec_filter_row.controls.clear()
+            for s_key, s_label, s_icon, s_col in sec_opts:
+                is_s_act = (dashboard_section_filter == s_key)
+                dashboard_sec_filter_row.controls.append(
+                    ft.Container(
+                        expand=1,
+                        bgcolor=s_col if is_s_act else CARD_IVORY,
+                        border=ft.border.all(1, s_col if is_s_act else BORDER_SAND),
+                        border_radius=10,
+                        padding=ft.padding.symmetric(horizontal=6, vertical=6),
+                        alignment=ft.alignment.center,
+                        on_click=lambda e, k=s_key: switch_dashboard_section_filter(k),
+                        content=ft.Row(
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            spacing=4,
+                            controls=[
+                                ft.Icon(s_icon, size=14, color=CARD_IVORY if is_s_act else s_col),
+                                ft.Text(s_label, size=10, font_family="Vazir-Bold", color=CARD_IVORY if is_s_act else ESPRESSO_DARK),
+                            ]
+                        )
+                    )
+                )
+
         modes = [
             ("day", "گزارش روزانه", ft.icons.TODAY_ROUNDED),
             ("month", "گزارش ماهانه", ft.icons.CALENDAR_MONTH_ROUNDED),
@@ -3073,27 +3678,34 @@ def main(page: ft.Page):
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
 
-        where_sql = ""
-        params = ()
+        conditions = []
+        params = []
 
         if filter_mode == "day":
             day_prefix = selected_date.strftime("%Y-%m-%d")
-            where_sql = "WHERE substr(order_date, 1, 10) = ?"
-            params = (day_prefix,)
+            conditions.append("substr(order_date, 1, 10) = ?")
+            params.append(day_prefix)
         elif filter_mode == "month":
             max_d = get_jalali_month_days(selected_j_year, selected_j_month)
             g_start = jalali_to_gregorian(selected_j_year, selected_j_month, 1)
             g_end = jalali_to_gregorian(selected_j_year, selected_j_month, max_d)
             start_str = f"{g_start[0]:04d}-{g_start[1]:02d}-{g_start[2]:02d}"
             end_str = f"{g_end[0]:04d}-{g_end[1]:02d}-{g_end[2]:02d}"
-            where_sql = "WHERE substr(order_date, 1, 10) >= ? AND substr(order_date, 1, 10) <= ?"
-            params = (start_str, end_str)
+            conditions.append("substr(order_date, 1, 10) >= ? AND substr(order_date, 1, 10) <= ?")
+            params.extend([start_str, end_str])
+
+        eff_sec = active_section if app_mode in ("cafe", "restaurant") else dashboard_section_filter
+        if eff_sec in ("cafe", "restaurant"):
+            conditions.append("section = ?")
+            params.append(eff_sec)
+
+        where_sql = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
         cursor.execute(f"""
             SELECT COALESCE(SUM(sell_price), 0), COALESCE(SUM(profit), 0), COUNT(*)
             FROM orders
             {where_sql}
-        """, params)
+        """, tuple(params))
         total_rev, total_prof, total_count = cursor.fetchone()
         total_cost = total_rev - total_prof
         margin_pct = int((total_prof / total_rev) * 100) if total_rev > 0 else 0
@@ -3111,7 +3723,7 @@ def main(page: ft.Page):
             {where_sql}
             GROUP BY product_name
             ORDER BY qty DESC
-        """, params)
+        """, tuple(params))
         rows = cursor.fetchall()
         conn.close()
 
@@ -3261,6 +3873,34 @@ def main(page: ft.Page):
         )
     )
 
+    revenue_icon = ft.Icon(ft.icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=MOCHA_PRIMARY, size=20)
+    revenue_icon_box = ft.Container(
+        content=revenue_icon,
+        bgcolor=SURFACE_LATTE,
+        padding=8,
+        border_radius=10
+    )
+    revenue_card = ft.Container(
+        expand=1,
+        bgcolor=CARD_IVORY,
+        border_radius=14,
+        padding=11,
+        border=ft.border.all(1, BORDER_WARM),
+        content=ft.Row(
+            spacing=10,
+            controls=[
+                revenue_icon_box,
+                ft.Column(
+                    spacing=1,
+                    controls=[
+                        ft.Text("درآمد کل", size=10, color=TEXT_MUTED, font_family="Vazir-Bold"),
+                        total_revenue_text,
+                    ]
+                )
+            ]
+        )
+    )
+
     dashboard_view = ft.Container(
         padding=16,
         expand=True,
@@ -3268,37 +3908,14 @@ def main(page: ft.Page):
             spacing=9,
             expand=True,
             controls=[
+                dashboard_sec_filter_box,
                 mode_selector_row,
                 date_navigator_container,
                 hero_profit_card,
                 ft.Row(
                     spacing=8,
                     controls=[
-                        ft.Container(
-                            expand=1,
-                            bgcolor=CARD_IVORY,
-                            border_radius=14,
-                            padding=11,
-                            border=ft.border.all(1, BORDER_WARM),
-                            content=ft.Row(
-                                spacing=10,
-                                controls=[
-                                    ft.Container(
-                                        content=ft.Icon(ft.icons.ACCOUNT_BALANCE_WALLET_ROUNDED, color=MOCHA_PRIMARY, size=20),
-                                        bgcolor=SURFACE_LATTE,
-                                        padding=8,
-                                        border_radius=10
-                                    ),
-                                    ft.Column(
-                                        spacing=1,
-                                        controls=[
-                                            ft.Text("درآمد کل", size=10, color=TEXT_MUTED, font_family="Vazir-Bold"),
-                                            total_revenue_text,
-                                        ]
-                                    )
-                                ]
-                            )
-                        ),
+                        revenue_card,
                         ft.Container(
                             expand=1,
                             bgcolor=CARD_IVORY,
@@ -3335,14 +3952,22 @@ def main(page: ft.Page):
 
     body_container = ft.Container(content=cashier_view, expand=True)
 
-    def on_nav_change(e):
-        idx = e.control.selected_index
+    current_nav_index = [1]
+    nav_items_row = ft.Row(spacing=8, expand=True)
+
+    def switch_nav_tab(idx: int):
+        if current_nav_index[0] == idx:
+            return
+        current_nav_index[0] = idx
         close_custom_dropdown()
+        render_nav_bar()
         if idx == 0:
+            render_section_switchers()
             refresh_category_dropdown()
             load_menu_products()
             body_container.content = menu_view
         elif idx == 1:
+            render_section_switchers()
             render_cashier_category_chips()
             load_cashier_products()
             body_container.content = cashier_view
@@ -3352,35 +3977,159 @@ def main(page: ft.Page):
             body_container.content = dashboard_view
         page.update()
 
-    nav_bar = ft.NavigationBar(
-        selected_index=1,
-        height=65,
-        bgcolor=CARD_IVORY,
-        surface_tint_color=CARD_IVORY,
-        indicator_color=CHIP_LATTE,
-        elevation=12,
-        on_change=on_nav_change,
-        destinations=[
-            ft.NavigationBarDestination(
-                icon=ft.icons.MENU_BOOK_OUTLINED,
-                selected_icon=ft.icons.MENU_BOOK_ROUNDED,
-                label="مدیریت منو"
-            ),
-            ft.NavigationBarDestination(
-                icon=ft.icons.STOREFRONT_OUTLINED,
-                selected_icon=ft.icons.STOREFRONT_ROUNDED,
-                label="صندوق فروش"
-            ),
-            ft.NavigationBarDestination(
-                icon=ft.icons.ANALYTICS_OUTLINED,
-                selected_icon=ft.icons.ANALYTICS_ROUNDED,
-                label="داشبورد مالی"
-            ),
+    def render_nav_bar():
+        tabs_data = [
+            (0, "مدیریت منو", ft.icons.MENU_BOOK_OUTLINED, ft.icons.MENU_BOOK_ROUNDED),
+            (1, "صندوق فروش", ft.icons.STOREFRONT_OUTLINED, ft.icons.STOREFRONT_ROUNDED),
+            (2, "داشبورد مالی", ft.icons.ANALYTICS_OUTLINED, ft.icons.ANALYTICS_ROUNDED),
         ]
+        nav_items_row.controls.clear()
+        for t_idx, t_label, t_icon_out, t_icon_sel in tabs_data:
+            is_sel = (current_nav_index[0] == t_idx)
+            nav_items_row.controls.append(
+                ft.Container(
+                    expand=1,
+                    height=54,
+                    bgcolor=CHIP_LATTE if is_sel else ft.colors.with_opacity(0, CARD_IVORY),
+                    border=ft.border.all(1, BORDER_WARM) if is_sel else None,
+                    border_radius=14,
+                    alignment=ft.alignment.center,
+                    on_click=lambda e, i=t_idx: switch_nav_tab(i),
+                    content=ft.Column(
+                        spacing=2,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Icon(
+                                t_icon_sel if is_sel else t_icon_out,
+                                size=22,
+                                color=MOCHA_PRIMARY if is_sel else TEXT_MUTED,
+                            ),
+                            ft.Text(
+                                t_label,
+                                size=11,
+                                font_family="Vazir-Bold" if is_sel else "Vazir",
+                                color=ESPRESSO_DARK if is_sel else TEXT_MUTED,
+                            ),
+                        ]
+                    )
+                )
+            )
+
+    nav_bar = ft.Container(
+        height=68,
+        bgcolor=CARD_IVORY,
+        padding=ft.padding.symmetric(horizontal=10, vertical=7),
+        shadow=ft.BoxShadow(
+            blur_radius=12,
+            color=ft.colors.with_opacity(0.08, ESPRESSO_DARK),
+            offset=ft.Offset(0, -3)
+        ),
+        content=nav_items_row,
     )
 
+    def apply_active_theme():
+        nonlocal BG_CREAM, CARD_IVORY, SURFACE_LATTE, CHIP_LATTE, BORDER_SAND, BORDER_WARM
+        nonlocal ESPRESSO_DARK, MOCHA_PRIMARY, CARAMEL_ACCENT, TEXT_MUTED, DISABLED_BG, DISABLED_TEXT
+
+        th = THEMES[active_section]
+        BG_CREAM = th["BG_CREAM"]
+        CARD_IVORY = th["CARD_IVORY"]
+        SURFACE_LATTE = th["SURFACE_LATTE"]
+        CHIP_LATTE = th["CHIP_LATTE"]
+        BORDER_SAND = th["BORDER_SAND"]
+        BORDER_WARM = th["BORDER_WARM"]
+        ESPRESSO_DARK = th["ESPRESSO_DARK"]
+        MOCHA_PRIMARY = th["MOCHA_PRIMARY"]
+        CARAMEL_ACCENT = th["CARAMEL_ACCENT"]
+        TEXT_MUTED = th["TEXT_MUTED"]
+        DISABLED_BG = th["DISABLED_BG"]
+        DISABLED_TEXT = th["DISABLED_TEXT"]
+
+        page.bgcolor = BG_CREAM
+        top_app_header.gradient = ft.LinearGradient(
+            begin=ft.alignment.top_right,
+            end=ft.alignment.bottom_left,
+            colors=th["HEADER_GRAD"]
+        )
+        top_app_header.shadow = ft.BoxShadow(
+            blur_radius=14,
+            color=ft.colors.with_opacity(0.18, th["HEADER_SHADOW"]),
+            offset=ft.Offset(0, 4)
+        )
+
+        if app_mode == "cafe":
+            target_hdr_icon = ft.icons.COFFEE_ROUNDED
+            header_sub_title.value = "حسابداری کافه"
+            header_logo_box.bgcolor = ft.colors.with_opacity(0.2, "#FFFDF9")
+            header_logo_box.border = ft.border.all(1, ft.colors.with_opacity(0.35, "#FFFDF9"))
+            header_logo_box.content = ft.Icon(target_hdr_icon, color="#FFFDF9", size=22)
+        elif app_mode == "restaurant":
+            target_hdr_icon = ft.icons.RESTAURANT_ROUNDED
+            header_sub_title.value = "حسابداری رستوران"
+            header_logo_box.bgcolor = ft.colors.with_opacity(0.2, "#FFFDF9")
+            header_logo_box.border = ft.border.all(1, ft.colors.with_opacity(0.35, "#FFFDF9"))
+            header_logo_box.content = ft.Icon(target_hdr_icon, color="#FFFDF9", size=22)
+        else:
+            target_hdr_icon = ft.icons.STOREFRONT_ROUNDED
+            header_sub_title.value = "حسابداری کافه رستوران"
+            header_logo_box.bgcolor = BOTH_BLEND_BG
+            header_logo_box.border = ft.border.all(1, BOTH_BLEND_BORDER)
+            header_logo_box.content = ft.Icon(target_hdr_icon, color=BOTH_BLEND_MAIN, size=22)
+
+        render_nav_bar()
+
+        search_input.border_color = BORDER_WARM
+        search_input.focused_border_color = MOCHA_PRIMARY
+
+        show_add_form_btn.bgcolor = MOCHA_PRIMARY
+        menu_header_icon.color = MOCHA_PRIMARY
+        menu_header_icon_box.bgcolor = CHIP_LATTE
+        menu_count_badge.color = MOCHA_PRIMARY
+        menu_count_badge_box.bgcolor = CHIP_LATTE
+        add_form_container.border = ft.border.all(1.5, BORDER_WARM)
+
+        for inp in (name_input, cost_input, sell_input, new_cat_input, backup_code_field):
+            inp.border_color = BORDER_WARM
+            inp.focused_border_color = MOCHA_PRIMARY
+            inp.bgcolor = SURFACE_LATTE
+
+        custom_dropdown_box.border = ft.border.all(1, BORDER_WARM)
+        custom_dropdown_box.bgcolor = SURFACE_LATTE
+        dropdown_arrow_icon.color = MOCHA_PRIMARY
+        custom_dropdown_list_container.border = ft.border.all(1, BORDER_WARM)
+
+        sell_words_text.color = MOCHA_PRIMARY
+        sell_words_icon.color = MOCHA_PRIMARY
+        sell_words_box.bgcolor = BG_CREAM
+        sell_words_box.border = ft.border.all(1, BORDER_SAND)
+
+        cat_dlg_icon.color = MOCHA_PRIMARY
+        cat_dlg_icon_box.bgcolor = CHIP_LATTE
+        cat_dlg_add_btn.bgcolor = MOCHA_PRIMARY
+
+        bkp_header_icon.color = MOCHA_PRIMARY
+        bkp_header_icon_box.bgcolor = CHIP_LATTE
+        bkp_new_btn.bgcolor = MOCHA_PRIMARY
+        bkp_text_label.color = MOCHA_PRIMARY
+        bkp_restore_code_btn.bgcolor = MOCHA_PRIMARY
+        copy_btn.bgcolor = CHIP_LATTE
+        copy_btn.color = ESPRESSO_DARK
+
+        cal_next_btn.bgcolor = CHIP_LATTE
+        cal_prev_btn.bgcolor = CHIP_LATTE
+        cal_today_btn.bgcolor = CHIP_LATTE
+        cal_today_btn.color = ESPRESSO_DARK
+
+        total_revenue_text.color = MOCHA_PRIMARY
+        revenue_icon.color = MOCHA_PRIMARY
+        revenue_icon_box.bgcolor = SURFACE_LATTE
+        revenue_card.border = ft.border.all(1, BORDER_WARM)
+
+        update_live_profit_preview()
+
     # ثبت تمام لایه‌های مودال برای قفل خودکار دکمه‌های زیرین
-    all_modals.extend([bkp_dlg, recent_orders_dlg, cat_dialog, cal_dlg, confirm_dlg])
+    all_modals.extend([bkp_dlg, mode_dlg, recent_orders_dlg, cat_dialog, cal_dlg, confirm_dlg])
 
     main_app_col.controls.extend([
         top_app_header,
@@ -3388,6 +4137,8 @@ def main(page: ft.Page):
         nav_bar,
     ])
 
+    apply_active_theme()
+    render_section_switchers()
     refresh_category_dropdown()
     refresh_header_today_sales()
     render_cashier_category_chips()
@@ -3400,6 +4151,7 @@ def main(page: ft.Page):
             controls=[
                 main_app_col,
                 bkp_dlg,
+                mode_dlg,
                 recent_orders_dlg,
                 cat_dialog,
                 cal_dlg,

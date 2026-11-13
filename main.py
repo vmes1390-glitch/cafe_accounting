@@ -219,6 +219,12 @@ DB_NAME = os.path.join(APP_STORAGE_DIR, "cafe_accounting.db")
 INTERNAL_BACKUP_DIR = os.path.join(APP_STORAGE_DIR, "backups")
 BACKUP_CODE_PREFIX = "VITA_BKP_V1:"
 
+# =====================================================================
+# تنظیمات دوره آزمایشی و تاریخ انقضای نسخه (جهت انتشار در کافه‌بازار)
+# =====================================================================
+VERSION_EXPIRE_JALALI = (1405, 10, 25)  # تاریخ انقضای کلی این نسخه (سال، ماه، روز شمسی)
+FREE_TRIAL_DAYS = 40                    # تعداد روزهای استفاده رایگان از زمان اولین نصب کاربر
+
 # دسته‌بندی‌های پیش‌فرض کافه (کاملاً دست‌نخورده)
 DEFAULT_CATEGORIES = [
     "قهوه‌ها",
@@ -411,6 +417,15 @@ def init_db():
     """)
     cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('app_mode', 'cafe')")
 
+    # ثبت تاریخ اولین نصب و آخرین تاریخ اجرای برنامه (برای جلوگیری از عقب کشیدن ساعت گوشی)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('first_install_date', ?)", (today_str,))
+    cursor.execute("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('last_seen_date', ?)", (today_str,))
+    cursor.execute(
+        "UPDATE app_settings SET value = ? WHERE key = 'last_seen_date' AND value < ?",
+        (today_str, today_str)
+    )
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -577,6 +592,21 @@ def restore_db_from_file(backup_file_path: str):
         if not header.startswith(b"SQLite format 3"):
             return False, "فایل انتخاب‌شده یک دیتابیس معتبر نیست!"
 
+        # نگه‌داشتن تاریخ واقعی اولین نصب و آخرین اجرا قبل از جایگزینی دیتابیس
+        prev_install, prev_seen = None, None
+        try:
+            c_old = sqlite3.connect(DB_NAME)
+            cur_old = c_old.cursor()
+            cur_old.execute("SELECT key, value FROM app_settings WHERE key IN ('first_install_date', 'last_seen_date')")
+            for k, v in cur_old.fetchall():
+                if k == "first_install_date":
+                    prev_install = v
+                elif k == "last_seen_date":
+                    prev_seen = v
+            c_old.close()
+        except Exception:
+            pass
+
         src_conn = sqlite3.connect(backup_file_path)
         dst_conn = sqlite3.connect(DB_NAME)
         with dst_conn:
@@ -584,6 +614,26 @@ def restore_db_from_file(backup_file_path: str):
         dst_conn.close()
         src_conn.close()
         init_db()
+
+        # حفظ قدیمی‌ترین تاریخ نصب و جدیدترین تاریخ اجرا پس از ریستور
+        try:
+            c_fix = sqlite3.connect(DB_NAME)
+            cur_fix = c_fix.cursor()
+            if prev_install:
+                cur_fix.execute(
+                    "UPDATE app_settings SET value = ? WHERE key = 'first_install_date' AND value > ?",
+                    (prev_install, prev_install)
+                )
+            if prev_seen:
+                cur_fix.execute(
+                    "UPDATE app_settings SET value = ? WHERE key = 'last_seen_date' AND value < ?",
+                    (prev_seen, prev_seen)
+                )
+            c_fix.commit()
+            c_fix.close()
+        except Exception:
+            pass
+
         return True, "اطلاعات با موفقیت بازگردانی شد!"
     except Exception as e:
         return False, f"خطا در بازگردانی: {e}"
@@ -639,6 +689,43 @@ def restore_db_from_text_code(code_str: str):
         return ok, msg
     except Exception:
         return False, "کد بکاپ ناقص یا نامعتبر است!"
+
+def check_app_lock_status():
+    """بررسی وضعیت انقضای نسخه یا دستکاری تاریخ گوشی"""
+    try:
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_dt = datetime.strptime(today_str, "%Y-%m-%d")
+
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("SELECT key, value FROM app_settings WHERE key IN ('first_install_date', 'last_seen_date')")
+        settings = dict(cur.fetchall())
+
+        cur.execute("SELECT MAX(substr(order_date, 1, 10)) FROM orders")
+        max_order_date = cur.fetchone()[0]
+        conn.close()
+
+        install_str = settings.get("first_install_date", today_str)
+        last_seen_str = settings.get("last_seen_date", today_str)
+
+        # ۱. تشخیص عقب کشیدن تاریخ گوشی توسط کاربر
+        if today_str < last_seen_str or (max_order_date and today_str < max_order_date):
+            return True, "تاریخ دستگاه شما به عقب کشیده شده است!\nلطفاً تاریخ گوشی را به حالت واقعی برگردانید تا برنامه فعال شود."
+
+        # ۲. بررسی تاریخ انقضای کلی نسخه (برای اجبار به آپدیت از بازار)
+        exp_gy, exp_gm, exp_gd = jalali_to_gregorian(*VERSION_EXPIRE_JALALI)
+        exp_str = f"{exp_gy:04d}-{exp_gm:02d}-{exp_gd:02d}"
+        if today_str >= exp_str:
+            return True, "مهلت استفاده از این نسخه آزمایشی به پایان رسیده است.\nلطفاً برای ادامه کار، آخرین نسخه «ویتا حساب» را از بازار دریافت و بروزرسانی کنید."
+
+        # ۳. بررسی تعداد روزهای استفاده رایگان از زمان اولین نصب
+        install_dt = datetime.strptime(install_str[:10], "%Y-%m-%d")
+        if (today_dt - install_dt).days >= FREE_TRIAL_DAYS:
+            return True, f"مهلت {FREE_TRIAL_DAYS} روزه نسخه آزمایشی شما به پایان رسیده است.\nلطفاً جهت فعال‌سازی اشتراک، برنامه را از بازار بروزرسانی کنید."
+
+        return False, ""
+    except Exception:
+        return False, ""
 
 
 def force_windows_icon(icon_filename: str, window_title: str):
@@ -1202,9 +1289,9 @@ def main(page: ft.Page):
         load_dashboard_data()
 
     # =========================================================================
-    # مرکز بکاپ و بازیابی اطلاعات (وسط صفحه + قفل کامل زیرین)
+    # مرکز بکاپ و بازیابی اطلاعات (وسط صفحه + تنظیم هوشمند ارتفاع با کیبورد)
     # =========================================================================
-    backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=130)
+    backups_list_col = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=170)
     status_timer_ref = [None]
     copy_timer_ref = [None]
 
@@ -1257,6 +1344,7 @@ def main(page: ft.Page):
 
     def close_bkp_modal(e=None):
         close_ctrl(bkp_dlg)
+        enforce_app_lock_if_needed()
 
     def show_dialog_status(msg: str, is_error=False):
         if status_timer_ref[0] is not None:
@@ -1597,27 +1685,11 @@ def main(page: ft.Page):
     )
 
     def _set_bkp_keyboard_mode(kb_open: bool):
-        backups_list_col.height = 68 if kb_open else 112
+        backups_list_col.height = 68 if kb_open else 170
         bkp_inner_col.spacing = 5 if kb_open else 8
         bkp_card_box.padding = ft.padding.symmetric(horizontal=16, vertical=8 if kb_open else 12)
         if getattr(bkp_dlg, "visible", False):
             refresh_ui(backups_list_col, bkp_inner_col, bkp_card_box, bkp_dlg)
-
-    backup_code_field.on_focus = lambda e: _set_bkp_keyboard_mode(True)
-    backup_code_field.on_blur = lambda e: _set_bkp_keyboard_mode(False)
-
-    def _on_page_resize(e):
-        if getattr(bkp_dlg, "visible", False) and page.height:
-            _set_bkp_keyboard_mode(page.height < 560)
-
-    try:
-        page.on_resized = _on_page_resize
-    except Exception:
-        pass
-    try:
-        page.on_resize = _on_page_resize
-    except Exception:
-        pass
 
     bkp_dlg = make_centered_modal(bkp_card_box)
 
@@ -2240,6 +2312,8 @@ def main(page: ft.Page):
                 cat_icon, cat_color, cat_bg, cat_border = get_category_style(p_cat)
 
                 def direct_checkout_click(e, prod=(p_id, p_name, p_cost, p_sell), sec=active_section):
+                    if enforce_app_lock_if_needed():
+                        return
                     conn = sqlite3.connect(DB_NAME)
                     cursor = conn.cursor()
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -3981,6 +4055,9 @@ def main(page: ft.Page):
 
     body_container = ft.Container(content=cashier_view, expand=True)
 
+    # =========================================================================
+    # نوار پایین سفارشی با محدوده لمس کامل (شامل آیکون و نوشته)
+    # =========================================================================
     current_nav_index = [1]
     nav_items_row = ft.Row(spacing=8, expand=True)
 
@@ -4056,6 +4133,93 @@ def main(page: ft.Page):
         ),
         content=nav_items_row,
     )
+
+    # =========================================================================
+    # پنجره قفل پایان مهلت نسخه آزمایشی (با قابلیت دسترسی امن به بکاپ)
+    # =========================================================================
+    lock_msg_text = ft.Text("", size=12, color=TEXT_MUTED, text_align=ft.TextAlign.CENTER)
+    lock_icon = ft.Icon(ft.icons.SYSTEM_UPDATE_ROUNDED, color=MOCHA_PRIMARY, size=34)
+    lock_icon_box = ft.Container(
+        content=lock_icon,
+        bgcolor=CHIP_LATTE,
+        padding=16,
+        border_radius=50,
+        border=ft.border.all(1, BORDER_WARM),
+    )
+
+    def open_backup_from_lock(e):
+        close_ctrl(lock_dlg)
+        open_backup_manager_dialog(e)
+
+    lock_bkp_btn = ft.ElevatedButton(
+        "دسترسی به مرکز بکاپ و کد پشتیبان",
+        icon=ft.icons.BACKUP_ROUNDED,
+        bgcolor=MOCHA_PRIMARY,
+        color=ft.colors.WHITE,
+        height=40,
+        expand=True,
+        rtl=True,
+        style=ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=12),
+            text_style=ft.TextStyle(size=11, font_family="Vazir-Bold")
+        ),
+        on_click=open_backup_from_lock
+    )
+
+    lock_card_box = ft.Container(
+        width=345,
+        bgcolor=CARD_IVORY,
+        border_radius=22,
+        padding=ft.padding.symmetric(horizontal=20, vertical=20),
+        shadow=ft.BoxShadow(
+            blur_radius=24,
+            color=ft.colors.with_opacity(0.32, "#000000"),
+            offset=ft.Offset(0, 8),
+        ),
+        on_click=lambda e: None,
+        rtl=True,
+        content=ft.Column(
+            rtl=True,
+            tight=True,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+            controls=[
+                lock_icon_box,
+                ft.Text("نیاز به بروزرسانی برنامه", size=15, font_family="Vazir-Bold", color=ESPRESSO_DARK, text_align=ft.TextAlign.CENTER),
+                lock_msg_text,
+                ft.Container(
+                    bgcolor=PROFIT_SURFACE,
+                    border=ft.border.all(1, PROFIT_BORDER),
+                    border_radius=10,
+                    padding=ft.padding.symmetric(horizontal=10, vertical=7),
+                    content=ft.Row(
+                        rtl=True,
+                        spacing=6,
+                        controls=[
+                            ft.Icon(ft.icons.VERIFIED_USER_ROUNDED, color=PROFIT_DARK, size=16),
+                            ft.Text(
+                                "تمام محصولات و فاکتورهای شما کاملاً محفوظ است.",
+                                size=10,
+                                font_family="Vazir-Bold",
+                                color=PROFIT_DARK,
+                                expand=True,
+                            ),
+                        ]
+                    )
+                ),
+                ft.Row(rtl=True, controls=[lock_bkp_btn]),
+            ]
+        )
+    )
+    lock_dlg = make_centered_modal(lock_card_box)
+
+    def enforce_app_lock_if_needed():
+        is_locked, reason_msg = check_app_lock_status()
+        if is_locked:
+            lock_msg_text.value = reason_msg
+            open_ctrl(lock_dlg)
+            return True
+        return False
 
     def apply_active_theme():
         nonlocal BG_CREAM, CARD_IVORY, SURFACE_LATTE, CHIP_LATTE, BORDER_SAND, BORDER_WARM
@@ -4145,6 +4309,11 @@ def main(page: ft.Page):
         copy_btn.bgcolor = CHIP_LATTE
         copy_btn.color = ESPRESSO_DARK
 
+        lock_icon.color = MOCHA_PRIMARY
+        lock_icon_box.bgcolor = CHIP_LATTE
+        lock_icon_box.border = ft.border.all(1, BORDER_WARM)
+        lock_bkp_btn.bgcolor = MOCHA_PRIMARY
+
         cal_next_btn.bgcolor = CHIP_LATTE
         cal_prev_btn.bgcolor = CHIP_LATTE
         cal_today_btn.bgcolor = CHIP_LATTE
@@ -4157,8 +4326,132 @@ def main(page: ft.Page):
 
         update_live_profit_preview()
 
+    # =========================================================================
+    # مدیریت هوشمند فوکوس و قطع قابلیت تایپ با بسته شدن کیبورد یا کلیک بیرون کادر
+    # =========================================================================
+    all_text_inputs = [
+        search_input,
+        name_input,
+        cost_input,
+        sell_input,
+        new_cat_input,
+        backup_code_field,
+    ]
+    focused_inputs_set = set()
+    last_focus_ts_ref = [0.0]
+    kb_open_ref = [False]
+    last_h_ref = [0]
+    max_h_ref = [0]
+
+    def unfocus_all_inputs(from_outside_click=False):
+        if from_outside_click and (time.time() - last_focus_ts_ref[0] < 0.18):
+            return
+
+        targets = list(focused_inputs_set)
+        if getattr(bkp_dlg, "visible", False) and backup_code_field not in targets:
+            targets.append(backup_code_field)
+        if getattr(cat_dialog, "visible", False) and new_cat_input not in targets:
+            targets.append(new_cat_input)
+
+        focused_inputs_set.clear()
+        kb_open_ref[0] = False
+        _set_bkp_keyboard_mode(False)
+
+        if not targets:
+            return
+
+        for inp in targets:
+            inp.disabled = True
+        refresh_ui(*targets)
+
+        def _reenable_inputs():
+            for inp in targets:
+                inp.disabled = False
+            refresh_ui(*targets)
+
+        t_en = threading.Timer(0.04, _reenable_inputs)
+        t_en.daemon = True
+        t_en.start()
+
+    def _on_any_input_focus(e):
+        last_focus_ts_ref[0] = time.time()
+        focused_inputs_set.add(e.control)
+        if e.control is backup_code_field:
+            _set_bkp_keyboard_mode(True)
+
+    def _on_any_input_blur(e):
+        focused_inputs_set.discard(e.control)
+        if e.control is backup_code_field:
+            _set_bkp_keyboard_mode(False)
+
+    for _inp in all_text_inputs:
+        _inp.on_focus = _on_any_input_focus
+        _inp.on_blur = _on_any_input_blur
+
+    for _outside_box in (
+        bkp_dlg,
+        bkp_card_box,
+        cat_dialog,
+        cat_dialog_card,
+        top_app_header,
+        cashier_view,
+        dashboard_view,
+        add_form_container,
+    ):
+        _outside_box.on_click = lambda e: unfocus_all_inputs(from_outside_click=True)
+
+    menu_view.on_click = lambda e: (close_custom_dropdown(), unfocus_all_inputs(from_outside_click=True))
+
+    def _on_media_change(e):
+        try:
+            insets = getattr(e, "view_insets", None) or getattr(getattr(page, "media", None), "view_insets", None)
+            bottom_inset = getattr(insets, "bottom", 0) or 0
+            if bottom_inset > 80:
+                kb_open_ref[0] = True
+                if getattr(bkp_dlg, "visible", False):
+                    _set_bkp_keyboard_mode(True)
+            elif bottom_inset <= 20 and kb_open_ref[0]:
+                kb_open_ref[0] = False
+                unfocus_all_inputs(from_outside_click=False)
+        except Exception:
+            pass
+
+    def _on_page_resize(e):
+        try:
+            h = getattr(e, "height", None) or page.height or 0
+            if h <= 0:
+                return
+            if last_h_ref[0] == 0:
+                last_h_ref[0] = h
+                max_h_ref[0] = h
+                return
+            if h > max_h_ref[0]:
+                max_h_ref[0] = h
+
+            if (max_h_ref[0] - h) > 100 or (last_h_ref[0] - h) > 80:
+                kb_open_ref[0] = True
+                if getattr(bkp_dlg, "visible", False):
+                    _set_bkp_keyboard_mode(True)
+            elif kb_open_ref[0] and ((h - last_h_ref[0]) > 80 or (max_h_ref[0] - h) <= 40):
+                kb_open_ref[0] = False
+                unfocus_all_inputs(from_outside_click=False)
+
+            last_h_ref[0] = h
+        except Exception:
+            pass
+
+    for _ev_name, _handler in (
+        ("on_media_change", _on_media_change),
+        ("on_resized", _on_page_resize),
+        ("on_resize", _on_page_resize),
+    ):
+        try:
+            setattr(page, _ev_name, _handler)
+        except Exception:
+            pass
+
     # ثبت تمام لایه‌های مودال برای قفل خودکار دکمه‌های زیرین
-    all_modals.extend([bkp_dlg, mode_dlg, recent_orders_dlg, cat_dialog, cal_dlg, confirm_dlg])
+    all_modals.extend([bkp_dlg, mode_dlg, recent_orders_dlg, cat_dialog, cal_dlg, confirm_dlg, lock_dlg])
 
     main_app_col.controls.extend([
         top_app_header,
@@ -4168,6 +4461,7 @@ def main(page: ft.Page):
 
     apply_active_theme()
     render_section_switchers()
+    render_nav_bar()
     refresh_category_dropdown()
     refresh_header_today_sales()
     render_cashier_category_chips()
@@ -4185,10 +4479,12 @@ def main(page: ft.Page):
                 cat_dialog,
                 cal_dlg,
                 confirm_dlg,
+                lock_dlg,
                 floating_toast_card,
             ]
         )
     )
+    enforce_app_lock_if_needed()
 
 if __name__ == "__main__":
     ft.app(target=main, assets_dir=os.path.dirname(os.path.abspath(__file__)))
